@@ -34,6 +34,9 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument("--log_joints", action="store_true", default=False, help="Log joint positions and velocities.")
+parser.add_argument("--log_commands", action="store_true", default=False, help="Log velocity commands.")
+parser.add_argument("--log_interval", type=int, default=10, help="Interval (in steps) for logging joint data.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -57,6 +60,7 @@ import gymnasium as gym
 import os
 import time
 import torch
+import csv
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -174,6 +178,59 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    # setup joint logging if requested
+    joint_log_files = []
+    joint_writers = []
+    if args_cli.log_joints:
+        joint_log_dir = os.path.join(log_dir, "joint_logs")
+        os.makedirs(joint_log_dir, exist_ok=True)
+        
+        # Get joint names from the environment
+        robot = env.unwrapped.scene["robot"]
+        joint_names = robot.data.joint_names
+        num_envs = env.unwrapped.scene.num_envs
+        
+        print(f"[INFO] Logging joint data for {num_envs} environments")
+        print(f"[INFO] Joint names: {joint_names}")
+        print(f"[INFO] Logging interval: {args_cli.log_interval} steps")
+        
+        # Create CSV file for each environment
+        for env_idx in range(num_envs):
+            log_file_path = os.path.join(joint_log_dir, f"env_{env_idx:03d}_joints.csv")
+            log_file = open(log_file_path, 'w', newline='')
+            joint_log_files.append(log_file)
+            
+            # Create CSV writer with header
+            fieldnames = ['timestep', 'time'] + [f"{name}_pos" for name in joint_names] + [f"{name}_vel" for name in joint_names]
+            writer = csv.DictWriter(log_file, fieldnames=fieldnames)
+            writer.writeheader()
+            joint_writers.append(writer)
+    
+    # setup command logging if requested
+    command_log_files = []
+    command_writers = []
+    if args_cli.log_commands:
+        command_log_dir = os.path.join(log_dir, "command_logs")
+        os.makedirs(command_log_dir, exist_ok=True)
+        
+        num_envs = env.unwrapped.scene.num_envs
+        
+        print(f"[INFO] Logging command data for {num_envs} environments")
+        print(f"[INFO] Command logging interval: {args_cli.log_interval} steps")
+        
+        # Create CSV file for each environment
+        for env_idx in range(num_envs):
+            log_file_path = os.path.join(command_log_dir, f"env_{env_idx:03d}_commands.csv")
+            log_file = open(log_file_path, 'w', newline='')
+            command_log_files.append(log_file)
+            
+            # Create CSV writer with header
+            fieldnames = ['timestep', 'time', 'cmd_lin_vel_x', 'cmd_lin_vel_y', 'cmd_ang_vel_z', 
+                         'actual_lin_vel_x', 'actual_lin_vel_y', 'actual_ang_vel_z']
+            writer = csv.DictWriter(log_file, fieldnames=fieldnames)
+            writer.writeheader()
+            command_writers.append(writer)
+
     # reset environment
     obs = env.get_observations()
     timestep = 0
@@ -186,6 +243,71 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+        
+        # log joint data if requested
+        if args_cli.log_joints and timestep % args_cli.log_interval == 0:
+            robot = env.unwrapped.scene["robot"]
+            joint_pos = robot.data.joint_pos.cpu().numpy()  # Shape: [num_envs, num_joints]
+            joint_vel = robot.data.joint_vel.cpu().numpy()  # Shape: [num_envs, num_joints]
+            current_time = timestep * dt
+            
+            # Log data for each environment
+            for env_idx in range(env.unwrapped.scene.num_envs):
+                row_data = {
+                    'timestep': timestep,
+                    'time': current_time
+                }
+                
+                # Add joint positions
+                for joint_idx, joint_name in enumerate(robot.data.joint_names):
+                    row_data[f"{joint_name}_pos"] = joint_pos[env_idx, joint_idx]
+                    row_data[f"{joint_name}_vel"] = joint_vel[env_idx, joint_idx]
+                
+                joint_writers[env_idx].writerow(row_data)
+                # Flush to ensure data is written
+                joint_log_files[env_idx].flush()
+        
+        # log command data if requested
+        if args_cli.log_commands and timestep % args_cli.log_interval == 0:
+            robot = env.unwrapped.scene["robot"]
+            current_time = timestep * dt
+            
+            # Get velocity commands from the command manager
+            if hasattr(env.unwrapped, 'command_manager') and hasattr(env.unwrapped.command_manager, 'get_command'):
+                try:
+                    # Try to get velocity commands
+                    velocity_commands = env.unwrapped.command_manager.get_command("base_velocity")  # Shape: [num_envs, 3]
+                    velocity_commands_np = velocity_commands.cpu().numpy()
+                    
+                    # Get actual robot velocities
+                    actual_lin_vel = robot.data.root_lin_vel_b.cpu().numpy()  # Shape: [num_envs, 3]
+                    actual_ang_vel = robot.data.root_ang_vel_b.cpu().numpy()  # Shape: [num_envs, 3]
+                    
+                    # Log data for each environment
+                    for env_idx in range(env.unwrapped.scene.num_envs):
+                        row_data = {
+                            'timestep': timestep,
+                            'time': current_time,
+                            'cmd_lin_vel_x': velocity_commands_np[env_idx, 0],
+                            'cmd_lin_vel_y': velocity_commands_np[env_idx, 1], 
+                            'cmd_ang_vel_z': velocity_commands_np[env_idx, 2],
+                            'actual_lin_vel_x': actual_lin_vel[env_idx, 0],
+                            'actual_lin_vel_y': actual_lin_vel[env_idx, 1],
+                            'actual_ang_vel_z': actual_ang_vel[env_idx, 2]
+                        }
+                        
+                        command_writers[env_idx].writerow(row_data)
+                        # Flush to ensure data is written
+                        command_log_files[env_idx].flush()
+                        
+                except Exception as e:
+                    if timestep == 0:  # Only print once
+                        print(f"[WARNING] Could not access velocity commands: {e}")
+            else:
+                if timestep == 0:  # Only print once
+                    print("[WARNING] Command manager not accessible for logging commands")
+        
+        
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -196,6 +318,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
+
+    # # close joint log files if opened
+    # if args_cli.log_joints:
+    #     for log_file in joint_log_files:
+    #         log_file.close()
+    #     print(f"[INFO] Joint logging completed. Files saved in: {joint_log_dir}")
+    
+    # # close command log files if opened
+    # if args_cli.log_commands:
+    #     for log_file in command_log_files:
+    #         log_file.close()
+    #     print(f"[INFO] Command logging completed. Files saved in: {command_log_dir}")
 
     # close the simulator
     env.close()

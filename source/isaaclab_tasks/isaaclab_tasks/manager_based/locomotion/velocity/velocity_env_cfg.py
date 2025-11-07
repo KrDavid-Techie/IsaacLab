@@ -9,6 +9,7 @@ from dataclasses import MISSING
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.envs.common import ViewerCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -66,10 +67,27 @@ class MySceneCfg(InteractiveSceneCfg):
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-        ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-        debug_vis=False,
         mesh_prim_paths=["/World/ground"],
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(
+            resolution=0.1, 
+            size=[1.6, 1.0]
+        ),
+        debug_vis=False,
+    )
+    lidar_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.34)),
+        mesh_prim_paths=["/World/ground"],
+        ray_alignment="yaw",
+        pattern_cfg=patterns.LidarPatternCfg(
+            channels=100, 
+            vertical_fov_range=[-60, 45], 
+            horizontal_fov_range=[-120, 120], 
+            horizontal_res=1.0
+        ),
+        max_distance=5.0,  # LiDAR detection radius in meters
+        debug_vis=False,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights
@@ -81,11 +99,9 @@ class MySceneCfg(InteractiveSceneCfg):
         ),
     )
 
-
 ##
 # MDP settings
 ##
-
 
 @configclass
 class CommandsCfg:
@@ -104,22 +120,18 @@ class CommandsCfg:
         ),
     )
 
-
 @configclass
 class ActionsCfg:
     """Action specifications for the MDP."""
 
     joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True)
 
-
 @configclass
 class ObservationsCfg:
     """Observation specifications for the MDP."""
-
     @configclass
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
-
         # observation terms (order preserved)
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
@@ -137,11 +149,9 @@ class ObservationsCfg:
             noise=Unoise(n_min=-0.1, n_max=0.1),
             clip=(-1.0, 1.0),
         )
-
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-
     # observation groups
     policy: PolicyCfg = PolicyCfg()
 
@@ -149,7 +159,6 @@ class ObservationsCfg:
 @configclass
 class EventCfg:
     """Configuration for events."""
-
     # startup
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
@@ -162,7 +171,6 @@ class EventCfg:
             "num_buckets": 64,
         },
     )
-
     add_base_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
         mode="startup",
@@ -172,7 +180,6 @@ class EventCfg:
             "operation": "add",
         },
     )
-
     base_com = EventTerm(
         func=mdp.randomize_rigid_body_com,
         mode="startup",
@@ -181,7 +188,6 @@ class EventCfg:
             "com_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (-0.01, 0.01)},
         },
     )
-
     # reset
     base_external_force_torque = EventTerm(
         func=mdp.apply_external_force_torque,
@@ -192,7 +198,6 @@ class EventCfg:
             "torque_range": (-0.0, 0.0),
         },
     )
-
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
@@ -208,7 +213,6 @@ class EventCfg:
             },
         },
     )
-
     reset_robot_joints = EventTerm(
         func=mdp.reset_joints_by_scale,
         mode="reset",
@@ -217,7 +221,6 @@ class EventCfg:
             "velocity_range": (0.0, 0.0),
         },
     )
-
     # interval
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
@@ -226,11 +229,9 @@ class EventCfg:
         params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
     )
 
-
 @configclass
 class RewardsCfg:
     """Reward terms for the MDP."""
-
     # -- task
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
@@ -262,7 +263,6 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=0.0)
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=0.0)
 
-
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
@@ -273,22 +273,26 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
 
-
 @configclass
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
-
-
 ##
 # Environment configuration
 ##
-
-
 @configclass
 class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
+
+    # Viewer settings - chase camera for env2
+    viewer: ViewerCfg = ViewerCfg(
+        origin_type="asset_root",
+        env_index=0,
+        asset_name="robot",
+        eye=(3.0, 3.0, 2.0),
+        lookat=(0.0, 0.0, 0.5),
+    )
 
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)

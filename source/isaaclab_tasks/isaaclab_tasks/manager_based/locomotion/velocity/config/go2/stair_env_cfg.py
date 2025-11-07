@@ -6,6 +6,14 @@
 import torch
 from isaaclab.utils import configclass
 from isaaclab.managers import RewardTermCfg as RewTerm, SceneEntityCfg
+
+from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.terrains.terrain_generator_cfg import TerrainGeneratorCfg
+from isaaclab.terrains.height_field.hf_terrains_cfg import HfPyramidStairsTerrainCfg
+
+import isaaclab.sim as sim_utils
+
+from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.envs import mdp
 
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
@@ -16,23 +24,67 @@ from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import Lo
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
 
 
-
 @configclass
-class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
+class UnitreeGo2StairEnvCfg(LocomotionVelocityRoughEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
 
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base"
-        self.scene.height_scanner.debug_vis = False
-        self.scene.lidar_scanner.debug_vis = False
-        # scale down the terrains because the robot is small
-        self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.1)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
+        
+        self.viewer=None
+        #self.viewer.env_index=0
 
-        # reduce action scale
+        # Configure as TerrainGenerator
+        pyramid_terrain_cfg = TerrainGeneratorCfg(
+            size=(8.0, 8.0),
+            border_width=2.0,
+            num_rows=3,
+            num_cols=3,
+            horizontal_scale=0.1,
+            vertical_scale=0.005,
+            slope_threshold=0.75,
+            sub_terrains={ # Configure alternating pyramid and inverted pyramid stairs
+                "pyramid_stairs": HfPyramidStairsTerrainCfg(
+                    proportion=0.5,  # 50% normal pyramids
+                    step_height_range=(0.05, 0.20),
+                    step_width=0.30,
+                    platform_width=2.0,
+                    inverted=False,
+                ),
+                "inverted_pyramid_stairs": HfPyramidStairsTerrainCfg(
+                    proportion=0.5,  # 50% inverted pyramids  
+                    step_height_range=(0.05, 0.20),
+                    step_width=0.30,
+                    platform_width=2.0,
+                    inverted=True,
+                )
+            },
+            curriculum=False,  # No curriculum for visualization
+        )
+
+        # Create terrain importer configuration
+        self.scene.terrain = TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="generator",
+            terrain_generator=pyramid_terrain_cfg,
+            max_init_terrain_level=0,
+            collision_group=0,
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="multiply",
+                restitution_combine_mode="multiply",
+                static_friction=1.0,
+                dynamic_friction=1.0,
+                restitution=0.0,
+            ),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.5, 0.5, 0.5),
+                metallic=0.0,
+                roughness=1.0,
+            ),
+            debug_vis=False,
+        )
         self.actions.joint_pos.scale = 0.25
 
         # event
@@ -57,8 +109,12 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # rewards
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*_foot"
         self.rewards.feet_air_time.weight = 0.5  # Increased from 0.25
-        self.rewards.undesired_contacts = None
-        self.rewards.dof_torques_l2.weight = -0.0002 
+        self.rewards.undesired_contacts = RewTerm(
+            func=mdp.undesired_contacts,
+            weight=-10.0,
+            params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base")}
+        ) # Added to penalize base contacts
+        self.rewards.dof_torques_l2.weight = -0.0002
         self.rewards.track_lin_vel_xy_exp.weight = 1.5
         self.rewards.track_ang_vel_z_exp.weight = 0.75
         self.rewards.dof_acc_l2.weight = -2.5e-7
@@ -84,7 +140,7 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
 
 @configclass
-class UnitreeGo2RoughEnvCfg_PLAY(UnitreeGo2RoughEnvCfg):
+class UnitreeGo2StairEnvCfg_PLAY(UnitreeGo2StairEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
