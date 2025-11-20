@@ -3,10 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import torch
 from isaaclab.utils import configclass
-from isaaclab.managers import RewardTermCfg as RewTerm, SceneEntityCfg
-from isaaclab.envs import mdp
 
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 
@@ -16,75 +13,92 @@ from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import Lo
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
 
 
-
 @configclass
 class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
+    """Configuration for Go2 rough terrain locomotion with legged-loco training patterns."""
+    
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
+        
+        # Go2 robot configuration with legged-loco training patterns
 
-        self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        # Robot configuration
+        from copy import deepcopy
+        self.scene.robot = deepcopy(UNITREE_GO2_CFG)
+        self.scene.robot.prim_path = "{ENV_REGEX_NS}/Robot"
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base"
         self.scene.height_scanner.debug_vis = False
-        self.scene.lidar_scanner.debug_vis = False
-        # scale down the terrains because the robot is small
-        self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.1)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
+        
+        # Simulation settings
+        self.decimation = 4
+        self.sim.render_interval = 4
+        self.episode_length_s = 20.0
+        self.sim.dt = 0.005
+        
+        # Action configuration - optimized for Go2
+        self.actions.joint_pos.scale = 0.25  # Reduced for better stability
 
-        # reduce action scale
-        self.actions.joint_pos.scale = 0.25
+        # ============ REWARD CONFIGURATION (legged-loco style) ============
+        # Core locomotion rewards
+        # Linear Velocity Tracking - 전체 가중치 5 미만으로 조정
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0  # 주요 보상
+        self.rewards.track_ang_vel_z_exp.weight = 0.6   # 각속도 추적 보상
+        
+        # Body stability  
+        self.rewards.flat_orientation_l2.weight = -1.0  # 자세 페널티
+        self.rewards.lin_vel_z_l2.weight = -0.4        # 수직 속도 페널티
+        self.rewards.ang_vel_xy_l2.weight = -0.02      # 각속도 페널티
+        
+        # Joint and action penalties
+        self.rewards.dof_torques_l2.weight = -0.0001  # 토크 페널티
+        self.rewards.dof_acc_l2.weight = -1.0e-7      # 가속도 페널티
+        self.rewards.action_rate_l2.weight = -0.01    # 액션 변화율 페널티
+        
+        # Foot contact rewards
+        self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*_foot"
+        self.rewards.feet_air_time.weight = 0.15  # 발 접촉 보상
+        
+        # Fix unwanted contacts body name pattern and disable for better terrain adaptation
+        self.rewards.undesired_contacts.params["sensor_cfg"].body_names = ".*_thigh"
+        self.rewards.undesired_contacts.weight = -0.0001  # 약한 페널티로 조정
+        
 
-        # event
-        self.events.push_robot = None
-        self.events.add_base_mass.params["mass_distribution_params"] = (-1.0, 3.0)
+        # ============ EVENT CONFIGURATION ============
+        # Mass randomization
+        self.events.add_base_mass.params["mass_distribution_params"] = (-3.0, 3.0)
         self.events.add_base_mass.params["asset_cfg"].body_names = "base"
         self.events.base_external_force_torque.params["asset_cfg"].body_names = "base"
+        
+        # Joint initialization
         self.events.reset_robot_joints.params["position_range"] = (1.0, 1.0)
         self.events.reset_base.params = {
             "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
             "velocity_range": {
-                "x": (0.0, 0.0),
-                "y": (0.0, 0.0),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (0.0, 0.0),
+                "x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0),
+                "roll": (0.0, 0.0), "pitch": (0.0, 0.0), "yaw": (0.0, 0.0),
             },
         }
-        self.events.base_com = None
-
-        # rewards
-        self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*_foot"
-        self.rewards.feet_air_time.weight = 0.5  # Increased from 0.25
-        self.rewards.undesired_contacts = None
-        self.rewards.dof_torques_l2.weight = -0.0002 
-        self.rewards.track_lin_vel_xy_exp.weight = 1.5
-        self.rewards.track_ang_vel_z_exp.weight = 0.75
-        self.rewards.dof_acc_l2.weight = -2.5e-7
-
-        # ============ ANTI-CRAWLING REWARD MODIFICATIONS ============
-        # Significantly increase penalty for body tilting (was -2.5)
-        self.rewards.flat_orientation_l2.weight = -10.0
-        # Increase penalties for unwanted movements to prevent crawling
-        self.rewards.lin_vel_z_l2.weight = -4.0    # Prevent bouncing (was -2.0)
-        self.rewards.ang_vel_xy_l2.weight = -0.2    # Prevent roll/pitch (was -0.05)
-        # Add penalty for maintaining wrong height (prevents crawling low and Lidar sensor contact)
-        self.rewards.base_height_l2 = RewTerm(
-            func=mdp.base_height_l2,
-            weight=-5.0,
-            params={
-                "target_height": 0.34,  # Go2's normal standing height
-                "sensor_cfg": SceneEntityCfg("height_scanner")  # Use terrain-adjusted height for rough terrain
-            }
-        )
-
-        # terminations
+        
+        # ============ COMMAND CONFIGURATION ============
+        # Velocity command ranges optimized for Go2
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.rel_standing_envs = 0.1
+        
+        # ============ TERMINATION CONFIGURATION ============
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base"
+        
+        # Update sensor periods
+        self.scene.contact_forces.update_period = self.sim.dt
+        self.scene.height_scanner.update_period = self.sim.dt * self.decimation
 
 
 @configclass
 class UnitreeGo2RoughEnvCfg_PLAY(UnitreeGo2RoughEnvCfg):
+    """Configuration for Go2 rough terrain locomotion in play/demo mode."""
+    
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
@@ -102,6 +116,7 @@ class UnitreeGo2RoughEnvCfg_PLAY(UnitreeGo2RoughEnvCfg):
 
         # disable randomization for play
         self.observations.policy.enable_corruption = False
+        
         # remove random pushing event
         self.events.base_external_force_torque = None
         self.events.push_robot = None

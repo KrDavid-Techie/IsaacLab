@@ -136,8 +136,35 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
+    # Custom Critic
+    @configclass
+    class CriticCfg(ObsGroup):
+        """Observations for critic group."""
+        
+        # Extended observations for critic
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
+        projected_gravity = ObsTerm(
+            func=mdp.projected_gravity,
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+        )
+        velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
+        actions = ObsTerm(func=mdp.last_action)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+    
     # observation groups
     policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -253,6 +280,34 @@ class RewardsCfg:
             "target_height": 0.32,   
         },
         weight=-0.5
+    )
+    
+    # -- custom rewards from rough_env (Go2-specific)
+    # Hip deviation penalty - critical for Go2 stability
+    hip_deviation = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.18,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint"])},
+    )
+    
+    # Joint deviation for thigh and calf joints
+    joint_deviation = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.02,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_thigh_joint", ".*_calf_joint"])},
+    )
+    
+    # Action smoothness penalty
+    action_smoothness = RewTerm(
+        func=mdp.action_rate_l2,
+        weight=-0.01,
+    )
+    
+    # Joint power penalty
+    joint_power = RewTerm(
+        func=mdp.joint_torques_l2,
+        weight=-2e-5,
+        params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
 @configclass

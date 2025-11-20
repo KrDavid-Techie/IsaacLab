@@ -70,3 +70,5 @@ tests/
 # Docker history
 .isaac-lab-docker-history
 .github/copilot-instructions.md
+
+./legged-loco
