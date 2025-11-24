@@ -119,6 +119,9 @@ def stand_still_joint_deviation_l1(
     return mdp.joint_deviation_l1(env, asset_cfg) * (torch.norm(command[:, :2], dim=1) < command_threshold)
 
 # ==============================================================================
+# ==============================================================================
+# ==============================================================================
+# ==============================================================================
 # TERRAIN-ADAPTIVE REWARD FUNCTIONS (Go2 SDK-BASED)
 # ==============================================================================
 # These functions leverage Go2 SDK sensors for terrain-aware locomotion control:

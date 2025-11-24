@@ -319,17 +319,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
-    # # close joint log files if opened
-    # if args_cli.log_joints:
-    #     for log_file in joint_log_files:
-    #         log_file.close()
-    #     print(f"[INFO] Joint logging completed. Files saved in: {joint_log_dir}")
+    # close joint log files if opened
+    if args_cli.log_joints:
+        for log_file in joint_log_files:
+            log_file.close()
+        print(f"[INFO] Joint logging completed. Files saved in: {joint_log_dir}")
     
-    # # close command log files if opened
-    # if args_cli.log_commands:
-    #     for log_file in command_log_files:
-    #         log_file.close()
-    #     print(f"[INFO] Command logging completed. Files saved in: {command_log_dir}")
+    # close command log files if opened
+    if args_cli.log_commands:
+        for log_file in command_log_files:
+            log_file.close()
+        print(f"[INFO] Command logging completed. Files saved in: {command_log_dir}")
 
     # close the simulator
     env.close()

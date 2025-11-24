@@ -14,7 +14,7 @@ from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
 
 
 @configclass
-class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
+class UnitreeGo2StairEnvCfg(LocomotionVelocityRoughEnvCfg):
     """Configuration for Go2 rough terrain locomotion with legged-loco training patterns."""
     
     def __post_init__(self):
@@ -31,16 +31,16 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base"
         self.scene.height_scanner.debug_vis = False
         
-        # # Actuator configuration with custom stiffness and damping
-        # self.scene.robot.actuators["base_legs"] = DCMotorCfg(
-        #     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
-        #     effort_limit=23.5,
-        #     saturation_effort=23.5,
-        #     velocity_limit=30.0,
-        #     stiffness=25.0,  # Increased from default 25.0 
-        #     damping=0.5,     # Increased from default 0.5
-        #     friction=0.0,
-        # )
+        # Actuator configuration with custom stiffness and damping
+        self.scene.robot.actuators["base_legs"] = DCMotorCfg(
+            joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            effort_limit=23.5,
+            saturation_effort=23.5,
+            velocity_limit=30.0,
+            stiffness=25.0,  # Increased from default 25.0 
+            damping=0.5,     # Increased from default 0.5
+            friction=0.0,
+        )
         
         # Simulation settings
         self.decimation = 4
@@ -68,7 +68,9 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*_foot"
         self.rewards.feet_air_time.weight = 0.15  # 발 접촉 보상
         # Fix unwanted contacts body name pattern and disable for better terrain adaptation
-        self.rewards.undesired_contacts.params["sensor_cfg"].body_names = ".*_thigh"        
+        self.rewards.undesired_contacts.params["sensor_cfg"].body_names = ".*_thigh"
+        self.rewards.undesired_contacts.weight = -0.01  # 약한 페널티로 조정
+        
 
         # ============ EVENT CONFIGURATION ============
         # Mass randomization
@@ -102,7 +104,7 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
 
 @configclass
-class UnitreeGo2RoughEnvCfg_PLAY(UnitreeGo2RoughEnvCfg):
+class UnitreeGo2StairEnvCfg_PLAY(UnitreeGo2StairEnvCfg):
     """Configuration for Go2 rough terrain locomotion in play/demo mode."""
     
     def __post_init__(self):
