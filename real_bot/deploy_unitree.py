@@ -1,42 +1,34 @@
 import time
 import sys
-import math
+import os
+import socket
+import platform
 import numpy as np
 import onnxruntime as ort
+from scipy.spatial.transform import Rotation as R
 
-# NOTE: You need to install unitree_sdk2 python bindings
-# pip install unitree-sdk2py (or similar, check Unitree documentation)
+# Unitree SDK Imports
 try:
-    from unitree_sdk2py.core.channel import ChannelFactory, ChannelPublisher, ChannelSubscriber
-    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as LowCmd
-    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowState_ as LowState
-    from unitree_sdk2py.idl.go2.constants import unitree_go_msg_dds__LowCmd_Constants as LowCmdConstants
-    from unitree_sdk2py.utils.crc import crc32
+    from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+    from unitree_sdk2py.go2.low_level import unitree_go_msg_dds__LowCmd_
+    from unitree_sdk2py.go2.low_level import unitree_go_msg_dds__LowState_
+    from unitree_sdk2py.utils.crc import CRC
+    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd__init
 except ImportError:
     print("Error: unitree_sdk2py not found. Please install the Unitree SDK 2 Python bindings.")
-    print("This script is a template and requires the actual SDK to run on the robot.")
-    # Mocking for demonstration purposes if SDK is missing
-    class Mock: pass
-    ChannelFactory = Mock()
-    ChannelFactory.Instance = lambda: Mock()
-    ChannelFactory.Instance().Init = lambda x, y: None
-    ChannelPublisher = lambda x, y: Mock()
-    ChannelSubscriber = lambda x, y: Mock()
-    LowCmd = lambda: Mock()
-    LowState = lambda: Mock()
-    crc32 = lambda x: 0
+    sys.exit(1)
 
-# Configuration
-POLICY_PATH = "policy.onnx"
+# --- Configuration ---
+POLICY_PATH = "exported/policy.onnx" # Path to the ONNX model
+ACTION_SCALE = 0.25
+KP = 25.0
+KD = 0.5
+DT = 0.02  # Control cycle (50Hz)
 NUM_ACTIONS = 12
-NUM_OBS = 48 # Example size, check your specific config (without height scan)
-DECIMATION = 4
-DT = 0.005
-CONTROL_DT = DT * DECIMATION # 0.02s (50Hz)
+HEIGHT_SCAN_SIZE = 187 # From env.yaml (1.6x1.0m grid with 0.1m resolution -> 17x11 points)
 
-# Robot Constants (Go2)
-# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf, RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
-# NOTE: Check your specific robot's joint order in Isaac Lab config!
+# Default Joint Positions (Isaac Lab Order: FL, FR, RL, RR)
+# FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf, RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 DEFAULT_JOINT_POS = np.array([
     0.1, 0.8, -1.5,   # FL
     -0.1, 0.8, -1.5,  # FR
@@ -44,137 +36,257 @@ DEFAULT_JOINT_POS = np.array([
     -0.1, 1.0, -1.5   # RR
 ], dtype=np.float32)
 
-ACTION_SCALE = 0.25
-KP = 20.0
-KD = 0.5
+# Joint Mapping Indices
+# Unitree SDK Order: FR, FL, RR, RL
+# Isaac Lab Order:   FL, FR, RL, RR
+
+# Unitree (FR, FL, RR, RL) -> Isaac (FL, FR, RL, RR)
+# FR(0-2) -> Isaac(3-5)
+# FL(3-5) -> Isaac(0-2)
+# RR(6-8) -> Isaac(9-11)
+# RL(9-11) -> Isaac(6-8)
+UNITREE_TO_ISAAC_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]
+
+# Isaac (FL, FR, RL, RR) -> Unitree (FR, FL, RR, RL)
+# FL(0-2) -> Unitree(3-5)
+# FR(3-5) -> Unitree(0-2)
+# RL(6-8) -> Unitree(9-11)
+# RR(9-11) -> Unitree(6-8)
+ISAAC_TO_UNITREE_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8] # Same mapping array works for swapping pairs
+
+def get_network_interface(input_str):
+    """
+    Resolves an IP address to a network interface name on Linux.
+    If the input is not a valid IP or we are not on Linux, returns the input as is.
+    """
+    try:
+        # Check if input is a valid IP
+        socket.inet_aton(input_str)
+        is_ip = True
+    except socket.error:
+        is_ip = False
+
+    if is_ip and platform.system() == 'Linux':
+        try:
+            import fcntl
+            import struct
+            
+            # Iterate over interfaces to find the one with this IP
+            if os.path.exists('/sys/class/net'):
+                interfaces = os.listdir('/sys/class/net')
+                for iface in interfaces:
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        # SIOCGIFADDR = 0x8915
+                        if_ip = socket.inet_ntoa(fcntl.ioctl(
+                            s.fileno(),
+                            0x8915,
+                            struct.pack('256s', iface[:15].encode('utf-8'))
+                        )[20:24])
+                        if if_ip == input_str:
+                            print(f"Resolved IP {input_str} to interface {iface}")
+                            return iface
+                    except Exception:
+                        continue
+        except ImportError:
+            pass # fcntl not available
+        except Exception as e:
+            print(f"Warning: Failed to resolve IP to interface: {e}")
+    
+    return input_str
 
 class RobotController:
     def __init__(self, network_interface):
-        self.low_state = None
-        self.low_cmd = LowCmd()
+        print(f"Initializing RobotController on {network_interface}...")
         
         # Initialize SDK
-        ChannelFactory.Instance().Init(0, network_interface)
+        ChannelFactoryInitialize(0, network_interface)
+        self.pub = ChannelFactoryInitialize(0).createPublisher("rt/lowcmd", unitree_go_msg_dds__LowCmd_)
+        self.sub = ChannelFactoryInitialize(0).createSubscriber("rt/lowstate", unitree_go_msg_dds__LowState_)
         
-        self.sub = ChannelSubscriber("rt/lowstate", LowState)
-        self.sub.Init(self.low_state_handler, 10)
-        
-        self.pub = ChannelPublisher("rt/lowcmd", LowCmd)
-        self.pub.Init()
-        
+        # Initialize LowCmd
+        self.cmd_msg = unitree_go_msg_dds__LowCmd__init()
+        self.cmd_msg.head[0] = 0xFE
+        self.cmd_msg.head[1] = 0xEF
+        self.cmd_msg.levelFlag = 0xFF
+        self.cmd_msg.gpio = 0
+        for i in range(20):
+            self.cmd_msg.motorCmd[i].mode = 0x01    # Servo mode
+            self.cmd_msg.motorCmd[i].q = 0.0        # Will be set later
+            self.cmd_msg.motorCmd[i].dq = 0.0       # Will be set later
+            self.cmd_msg.motorCmd[i].Kp = 0.0       # Will be set later
+            self.cmd_msg.motorCmd[i].Kd = 0.0       # Will be set later
+            self.cmd_msg.motorCmd[i].tau = 0.0      # Will be set later
+
         # Load Policy
-        self.ort_session = ort.InferenceSession(POLICY_PATH)
-        
+        try:
+            self.policy_session = ort.InferenceSession(POLICY_PATH)
+            self.input_name = self.policy_session.get_inputs()[0].name
+            self.input_shape = self.policy_session.get_inputs()[0].shape
+            self.expected_obs_dim = self.input_shape[1]
+            print(f"Policy loaded from {POLICY_PATH}. Expected obs dim: {self.expected_obs_dim}")
+        except Exception as e:
+            print(f"Error loading policy: {e}")
+            sys.exit(1)
+
         # State variables
-        self.last_action = np.zeros(NUM_ACTIONS, dtype=np.float32) # Initial set of Last action for observation
-        self.command = np.array([0.0, 0.0, 0.0], dtype=np.float32) # vx, vy, wz
+        self.last_actions = np.zeros(NUM_ACTIONS, dtype=np.float32)
+        self.target_vel = np.array([0.0, 0.0, 0.0], dtype=np.float32) # vx, vy, wz
+
+        print("Waiting for LowState...")
+        while True:
+            if self.sub.getData() is not None:
+                print("Received LowState.")
+                break
+            time.sleep(0.1)
+
+    def get_gravity_vector(self, quaternion):
+        # Unitree Quat: [w, x, y, z] -> Scipy expects [x, y, z, w]
+        r = R.from_quat([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
+        # Projected Gravity: R^T * [0, 0, -1]
+        return r.apply([0, 0, -1], inverse=True).astype(np.float32)
+
+    def estimate_base_height(self, q):
+        # Estimate robot base height from ground using Forward Kinematics
+        # Assumes feet are on the ground.
+        # q: Joint positions in Isaac Lab order (FL, FR, RL, RR)
+        # Constants for Go2
+        L1 = 0.213 # Thigh length
+        L2 = 0.213 # Calf length
         
-        print("Controller Initialized.")
-
-    def low_state_handler(self, msg):
-        self.low_state = msg
-
-    def get_observation(self):
-        if self.low_state is None:
-            return None
+        heights = []
+        for i in range(4):
+            # FL, FR, RL, RR
+            idx = i * 3
+            theta1 = q[idx]     # Hip Roll
+            theta2 = q[idx+1]   # Thigh Pitch
+            theta3 = q[idx+2]   # Calf Pitch
             
-        # 1. Base Linear Velocity (Estimated or 0)
-        # Real robots usually don't have this directly without an estimator.
-        # For robust policies, we often set this to 0 or use a VAE.
+            # Y offset of thigh joint in hip frame
+            # FL(0), RL(2) -> Left (+), FR(1), RR(3) -> Right (-)
+            y_t = 0.0955 if (i % 2 == 0) else -0.0955
+            
+            # Height calculation (Z distance from foot to base)
+            # h = L1*cos(th1)*cos(th2) + L2*cos(th1)*cos(th2+th3) - yt*sin(th1)
+            h = L1 * np.cos(theta1) * np.cos(theta2) + L2 * np.cos(theta1) * np.cos(theta2 + theta3) - y_t * np.sin(theta1)
+
+            heights.append(h)
+            
+        return np.mean(heights)
+
+    def get_observation(self, state):
+        # 1. Base Linear Velocity (Estimated)
+        # Real robot usually doesn't provide accurate base velocity without VIO/Lidar.
+        # We use 0.0 or state estimator if available. For robustness, often 0.0 is used in blind deployment.
         base_lin_vel = np.zeros(3, dtype=np.float32) 
         
-        # 2. Base Angular Velocity (IMU)
-        imu = self.low_state.imu_state
-        base_ang_vel = np.array([imu.gyroscope[0], imu.gyroscope[1], imu.gyroscope[2]], dtype=np.float32)
+        # 2. Base Angular Velocity (Gyro)
+        base_ang_vel = np.array(state.imu.gyroscope, dtype=np.float32)
         
         # 3. Projected Gravity
-        # Convert quaternion to gravity vector
-        q = imu.quaternion # w, x, y, z
-        # Simple gravity projection (assuming z-up)
-        # R(q)^T * [0, 0, -1]
-        # ... implementation of quaternion rotation ...
-        # Placeholder:
-        projected_gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32) 
+        projected_gravity = self.get_gravity_vector(state.imu.quaternion)
         
-        # 4. Commands
-        commands = self.command
+        # 4. Commands (Velocity)
+        commands = self.target_vel
         
-        # 5. Joint Positions 
-        joint_pos_raw = np.array([m.q for m in self.low_state.motor_state[:12]], dtype=np.float32)
-        joint_pos_rel = joint_pos_raw - DEFAULT_JOINT_POS # Relative
+        # 5. Joint Positions & 6. Joint Velocities
+        # Read Raw (Unitree Order: FR, FL, RR, RL)
+        q_raw = np.array([m.q for m in state.motorState[:12]], dtype=np.float32)
+        dq_raw = np.array([m.dq for m in state.motorState[:12]], dtype=np.float32)
         
-        # 6. Joint Velocities
-        joint_vel = np.array([m.dq for m in self.low_state.motor_state[:12]], dtype=np.float32)
+        # Convert to Isaac Order (FL, FR, RL, RR)
+        q_isaac = q_raw[UNITREE_TO_ISAAC_IDX]
+        dq_isaac = dq_raw[UNITREE_TO_ISAAC_IDX]
+        
+        # Relative Joint Positions
+        joint_pos_rel = q_isaac - DEFAULT_JOINT_POS
         
         # 7. Last Actions
-        last_actions = self.last_action
+        last_actions = self.last_actions
+        
+        # 8. Height Scan
+        # Estimate base height and use it to populate height scan (assuming flat ground)
+        # Height Scan = z_terrain - z_base ~= -estimated_height
+        est_height = self.estimate_base_height(q_isaac)
+        height_scan = np.full(HEIGHT_SCAN_SIZE, -est_height, dtype=np.float32)
         
         # Concatenate
         obs = np.concatenate([
-            base_lin_vel,
-            base_ang_vel,
-            projected_gravity,
-            commands,
-            joint_pos_rel,
-            joint_vel,
-            last_actions
+            base_lin_vel,      # 3
+            base_ang_vel,      # 3
+            projected_gravity, # 3
+            commands,          # 3
+            joint_pos_rel,     # 12
+            dq_isaac,          # 12
+            last_actions,      # 12
+            height_scan        # 187
         ])
         
-        # Add height scan if policy expects it (zeros for blind)
-        # obs = np.concatenate([obs, np.zeros(187)])
-        
+        # Verify dimension
+        if obs.shape[0] != self.expected_obs_dim:
+            # If mismatch, try to pad or trim (fallback)
+            # print(f"Warning: Obs dim mismatch. Expected {self.expected_obs_dim}, got {obs.shape[0]}")
+            if obs.shape[0] < self.expected_obs_dim:
+                obs = np.concatenate([obs, np.zeros(self.expected_obs_dim - obs.shape[0], dtype=np.float32)])
+            else:
+                obs = obs[:self.expected_obs_dim]
+                
         return obs.astype(np.float32)
 
     def run(self):
         print("Starting control loop...")
-        while True:
-            start_time = time.time()
-            
-            obs = self.get_observation()
-            if obs is not None:
-                # Inference
-                # ONNX Runtime expects list of inputs
-                ort_inputs = {self.ort_session.get_inputs()[0].name: obs.reshape(1, -1)}
-                actions = self.ort_session.run(None, ort_inputs)[0][0]
+        try:
+            while True:
+                start_time = time.time()
                 
-                self.last_action = actions
+                # 1. Receive State
+                state = self.sub.getData()
+                if state is not None:
+                    # 2. Get Observation
+                    obs = self.get_observation(state)
+                    
+                    # 3. Inference
+                    # ONNX Runtime expects list of inputs, usually named 'obs'
+                    ort_inputs = {self.input_name: obs.reshape(1, -1)}
+                    action_raw = self.policy_session.run(None, ort_inputs)[0][0]
+                    
+                    self.last_actions = action_raw
+                    
+                    # 4. Process Action (Sim to Real)
+                    # Target q = Default + Action * Scale
+                    q_target_isaac = DEFAULT_JOINT_POS + (action_raw * ACTION_SCALE)
+                    
+                    # Convert Isaac Order (FL, FR, RL, RR) -> Unitree Order (FR, FL, RR, RL)
+                    q_target_unitree = q_target_isaac[ISAAC_TO_UNITREE_IDX]
+                    
+                    # 5. Send Command
+                    for i in range(12):
+                        self.cmd_msg.motorCmd[i].q = q_target_unitree[i]
+                        self.cmd_msg.motorCmd[i].dq = 0.0
+                        self.cmd_msg.motorCmd[i].Kp = KP
+                        self.cmd_msg.motorCmd[i].Kd = KD
+                        self.cmd_msg.motorCmd[i].tau = 0.0
+                    
+                    self.cmd_msg.crc = CRC().Crc(self.cmd_msg)
+                    self.pub.write(self.cmd_msg)
                 
-                # Process Actions
-                target_pos = DEFAULT_JOINT_POS + actions * ACTION_SCALE
-                
-                # Send Command
-                self.send_command(target_pos)
-            
-            # Sleep to maintain frequency
-            elapsed = time.time() - start_time
-            sleep_time = CONTROL_DT - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-    def send_command(self, target_pos):
-        # Fill LowCmd
-        # Header, etc.
-        self.low_cmd.head[0] = 0xFE
-        self.low_cmd.head[1] = 0xEF
-        self.low_cmd.level_flag = 0xFF
-        
-        for i in range(12):
-            self.low_cmd.motor_cmd[i].mode = 0x01 # Servo mode
-            self.low_cmd.motor_cmd[i].q = target_pos[i]
-            self.low_cmd.motor_cmd[i].dq = 0.0
-            self.low_cmd.motor_cmd[i].kp = KP
-            self.low_cmd.motor_cmd[i].kd = KD
-            self.low_cmd.motor_cmd[i].tau = 0.0
-            
-        # CRC (if needed by python bindings, usually handled or helper provided)
-        # self.low_cmd.crc = crc32(self.low_cmd) 
-        
-        self.pub.Write(self.low_cmd)
+                # Maintain Frequency
+                elapsed = time.time() - start_time
+                if elapsed < DT:
+                    time.sleep(DT - elapsed)
+                    
+        except KeyboardInterrupt:
+            print("Stopping...")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python deploy_unitree.py <network_interface>")
+    if len(sys.argv) != 2:
+        print("Usage: python deploy_unitree.py <network_interface || ip>")
+        print("Example: python deploy_unitree.py eth0")
+        print("Example: python deploy_unitree.py 192.168.123.10")
         sys.exit(1)
         
-    controller = RobotController(sys.argv[1])
+    net_iface = get_network_interface(sys.argv[1])
+    controller = RobotController(net_iface) 
+    # Set initial command (e.g., walk forward slowly)
+    # controller.target_vel = np.array([0.3, 0.0, 0.0], dtype=np.float32) 
     controller.run()

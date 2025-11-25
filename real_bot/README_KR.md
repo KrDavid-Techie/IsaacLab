@@ -70,9 +70,10 @@ Isaac Lab에서 훈련이 완료되면, `play.py` 스크립트를 사용하여 �
         2.  `Base Ang Vel`: IMU 자이로스코프 값
         3.  `Projected Gravity`: IMU 쿼터니언으로 계산한 중력 벡터
         4.  `Commands`: 사용자가 원하는 목표 속도 (예: 전진 0.5m/s)
-        5.  `Joint Pos`: (현재 각도 - 기본 각도)
+        5.  `Joint Pos`: (현재 각도 - 기본 각도) *스크립트가 Unitree(FR...)와 Isaac(FL...) 간의 관절 순서 변환을 자동으로 처리합니다.*
         6.  `Joint Vel`: 현재 관절 속도
         7.  `Last Actions`: 직전 단계의 행동 값
+        8.  `Height Scan`: 로봇의 관절 각도를 이용해 높이를 추정(FK)하고, 평지라고 가정하여 스캔 값을 채워 넣습니다.
 
 2.  **모델 추론 (Inference)**:
     *   구성된 입력 벡터를 ONNX 모델에 넣고 실행합니다.

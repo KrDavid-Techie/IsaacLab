@@ -28,11 +28,11 @@ The observation vector is a concatenation of the following terms (in order):
     *   Computed from IMU orientation (quaternion/Euler).
 4.  **Velocity Commands** (3 dims): Desired commands $(v_x^{cmd}, v_y^{cmd}, \omega_z^{cmd})$.
 5.  **Joint Positions** (12 dims): Joint positions relative to default configuration $(q - q_{default})$.
-    *   Order: FL_hip, FL_thigh, FL_calf, FR_hip, ... (Check specific robot config).
+    *   **Mapping**: The script automatically handles the reordering between Unitree SDK order (FR, FL, RR, RL) and Isaac Lab order (FL, FR, RL, RR).
 6.  **Joint Velocities** (12 dims): Joint velocities $\dot{q}$.
 7.  **Last Actions** (12 dims): The action vector from the previous step.
 8.  **Height Scan** (Optional, ~187 dims): Height map around the robot.
-    *   *Note*: For sim-to-real without a depth camera pipeline, this is usually removed (blind policy) or zeroed out.
+    *   *Note*: The `deploy_unitree.py` script estimates the robot's base height using Forward Kinematics (assuming flat ground) and populates this field with `-estimated_height`. This enables running policies trained with height scans on a blind robot on flat terrain.
 
 ### Action Space (Output)
 
