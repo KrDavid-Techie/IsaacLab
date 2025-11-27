@@ -15,7 +15,8 @@ class UnitreeGo2RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 50
     experiment_name = "unitree_go2_rough"
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
+        init_noise_std=0.8,
+        noise_std_type="log",
         actor_obs_normalization=False,
         critic_obs_normalization=False,
         actor_hidden_dims=[512, 256, 128],
@@ -29,7 +30,7 @@ class UnitreeGo2RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=1.0e-4,
+        learning_rate=5.0e-5,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
@@ -47,3 +48,34 @@ class UnitreeGo2FlatPPORunnerCfg(UnitreeGo2RoughPPORunnerCfg):
         self.experiment_name = "unitree_go2_flat"
         self.policy.actor_hidden_dims = [128, 128, 128]
         self.policy.critic_hidden_dims = [128, 128, 128]
+
+
+@configclass
+class UnitreeGo2StairPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    num_steps_per_env = 24
+    max_iterations = 1500
+    save_interval = 50
+    experiment_name = "unitree_go2_stair"
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.8,
+        noise_std_type="log",
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=5.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.8,
+    )
