@@ -28,7 +28,8 @@ NUM_ACTIONS = 12
 HEIGHT_SCAN_SIZE = 187 # From env.yaml (1.6x1.0m grid with 0.1m resolution -> 17x11 points)
 
 # Default Joint Positions (Isaac Lab Order: FL, FR, RL, RR)
-# FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf, RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+# FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf 
+# RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 DEFAULT_JOINT_POS = np.array([
     0.1, 0.8, -1.5,   # FL
     -0.1, 0.8, -1.5,  # FR
@@ -41,18 +42,18 @@ DEFAULT_JOINT_POS = np.array([
 # Isaac Lab Order:   FL, FR, RL, RR
 
 # Unitree (FR, FL, RR, RL) -> Isaac (FL, FR, RL, RR)
-# FR(0-2) -> Isaac(3-5)
-# FL(3-5) -> Isaac(0-2)
-# RR(6-8) -> Isaac(9-11)
-# RL(9-11) -> Isaac(6-8)
-UNITREE_TO_ISAAC_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]
+# FR(0-2)   -> Isaac(3-5)
+# FL(3-5)   -> Isaac(0-2)
+# RR(6-8)   -> Isaac(9-11)
+# RL(9-11)  -> Isaac(6-8)
+UNITREE_TO_ISAAC_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8] # for swapping pairs
 
 # Isaac (FL, FR, RL, RR) -> Unitree (FR, FL, RR, RL)
-# FL(0-2) -> Unitree(3-5)
-# FR(3-5) -> Unitree(0-2)
-# RL(6-8) -> Unitree(9-11)
-# RR(9-11) -> Unitree(6-8)
-ISAAC_TO_UNITREE_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8] # Same mapping array works for swapping pairs
+# FL(0-2)   -> Unitree(3-5)
+# FR(3-5)   -> Unitree(0-2)
+# RL(6-8)   -> Unitree(9-11)
+# RR(9-11)  -> Unitree(6-8)
+ISAAC_TO_UNITREE_IDX = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8] # for swapping pairs
 
 def get_network_interface(input_str):
     """
@@ -111,7 +112,7 @@ class RobotController:
         self.cmd_msg.levelFlag = 0xFF
         self.cmd_msg.gpio = 0
         for i in range(20):
-            self.cmd_msg.motorCmd[i].mode = 0x01    # Servo mode
+            self.cmd_msg.motorCmd[i].mode = 0x01    # Servo Low-cmd mode
             self.cmd_msg.motorCmd[i].q = 0.0        # Will be set later
             self.cmd_msg.motorCmd[i].dq = 0.0       # Will be set later
             self.cmd_msg.motorCmd[i].Kp = 0.0       # Will be set later
@@ -130,7 +131,7 @@ class RobotController:
             sys.exit(1)
 
         # State variables
-        self.last_actions = np.zeros(NUM_ACTIONS, dtype=np.float32)
+        self.last_actions = np.zeros(NUM_ACTIONS, dtype=np.float32) # Initialize last actions to zeros
         self.target_vel = np.array([0.0, 0.0, 0.0], dtype=np.float32) # vx, vy, wz
 
         print("Waiting for LowState...")
@@ -178,21 +179,20 @@ class RobotController:
         # 1. Base Linear Velocity (Estimated)
         # Real robot usually doesn't provide accurate base velocity without VIO/Lidar.
         # We use 0.0 or state estimator if available. For robustness, often 0.0 is used in blind deployment.
-        base_lin_vel = np.zeros(3, dtype=np.float32) 
+        base_lin_vel = np.zeros(3, dtype=np.float32) # Initialize to zeros
         
         # 2. Base Angular Velocity (Gyro)
-        base_ang_vel = np.array(state.imu.gyroscope, dtype=np.float32)
+        base_ang_vel = np.array(state.imu.gyroscope, dtype=np.float32) # Initialize to IMU's gyroscope
         
         # 3. Projected Gravity
-        projected_gravity = self.get_gravity_vector(state.imu.quaternion)
+        projected_gravity = self.get_gravity_vector(state.imu.quaternion) # Initialize to IMU's quaternion
         
-        # 4. Commands (Velocity)
+        # 4. Commands (Velocity) vx, vy, wz
         commands = self.target_vel
         
-        # 5. Joint Positions & 6. Joint Velocities
         # Read Raw (Unitree Order: FR, FL, RR, RL)
-        q_raw = np.array([m.q for m in state.motorState[:12]], dtype=np.float32)
-        dq_raw = np.array([m.dq for m in state.motorState[:12]], dtype=np.float32)
+        q_raw = np.array([m.q for m in state.motorState[:12]], dtype=np.float32)# 5. Joint Positions 
+        dq_raw = np.array([m.dq for m in state.motorState[:12]], dtype=np.float32) # 6. Joint Velocities
         
         # Convert to Isaac Order (FL, FR, RL, RR)
         q_isaac = q_raw[UNITREE_TO_ISAAC_IDX]

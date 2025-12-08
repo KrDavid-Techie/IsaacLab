@@ -14,15 +14,19 @@ from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
 
 
 @configclass
-class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
+class UnitreeGo2StairEnvCfg(LocomotionVelocityRoughEnvCfg):
     """Configuration for Go2 rough terrain locomotion with legged-loco training patterns."""
     
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
         
-        # Go2 robot configuration with legged-loco training patterns
+        # Stair Terrain configuration
+        from isaaclab.terrains.config.rough import STAIR_TERRAINS_CFG  # isort: skip
+        self.scene.terrain.terrain_generator = STAIR_TERRAINS_CFG
+        self.scene.terrain.max_init_terrain_level = 10
 
+        # Go2 robot configuration with legged-loco training patterns
         # Robot configuration
         from copy import deepcopy
         from isaaclab.actuators import DCMotorCfg
@@ -37,8 +41,8 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             effort_limit=23.5,
             saturation_effort=23.5,
             velocity_limit=30.0,
-            stiffness=40.0,  # Increased from default 25.0 for better tracking
-            damping=1.0,     # Increased from default 0.5 for better stability
+            stiffness=25.0,  # Increased from default 25.0 
+            damping=0.5,     # Increased from default 0.5
             friction=0.0,
         )
         
@@ -106,7 +110,7 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
 
 @configclass
-class UnitreeGo2RoughEnvCfg_PLAY(UnitreeGo2RoughEnvCfg):
+class UnitreeGo2StairEnvCfg_PLAY(UnitreeGo2StairEnvCfg):
     """Configuration for Go2 rough terrain locomotion in play/demo mode."""
     
     def __post_init__(self):

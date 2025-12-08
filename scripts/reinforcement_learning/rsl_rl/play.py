@@ -61,6 +61,7 @@ import os
 import time
 import torch
 import csv
+import numpy as np
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -74,6 +75,8 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
+
+# from isaaclab.devices import Se3Keyboard,Se3KeyboardCfg
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
@@ -154,6 +157,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # obtain the trained policy for inference
     policy = runner.get_inference_policy(device=env.unwrapped.device)
 
+    # # === [추가 1] 키보드 컨트롤러 설정 ===
+    # # pos_sensitivity: 이동 속도 민감도 (m/s)
+    # # rot_sensitivity: 회전 속도 민감도 (rad/s)
+    # teleop_interface = Se3Keyboard(Se3KeyboardCfg(sim_device=env.unwrapped.device, pos_sensitivity=1.0, rot_sensitivity=1.0))
+    # print(teleop_interface) # 터미널에 조작법(W,A,S,D...)이 출력됩니다.
+    # # ==================================
+
     # extract the neural network module
     # we do this in a try-except to maintain backwards compatibility.
     try:
@@ -201,7 +211,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             joint_log_files.append(log_file)
             
             # Create CSV writer with header
-            fieldnames = ['timestep', 'time'] + [f"{name}_pos" for name in joint_names] + [f"{name}_vel" for name in joint_names]
+            # Added target_pos columns
+            fieldnames = ['timestep', 'time'] + \
+                         [f"{name}_pos" for name in joint_names] + \
+                         [f"{name}_target_pos" for name in joint_names] + \
+                         [f"{name}_vel" for name in joint_names]
             writer = csv.DictWriter(log_file, fieldnames=fieldnames)
             writer.writeheader()
             joint_writers.append(writer)
@@ -239,6 +253,31 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
+            # # === [추가 2] 키보드 명령 주입 ===
+            # # 1. 키보드 입력 받기 (delta 값 수신)
+            # delta_pose = teleop_interface.advance()
+            # delta_vel = delta_pose[0:3]
+            # delta_ang_vel = delta_pose[3:6]
+            
+            # # 2. 입력값이 있을 때만 명령 업데이트 (없으면 0 또는 이전 값 유지 등 정책에 따라 다름)
+            # # 여기서는 매 스텝 키 입력을 반영하도록 작성합니다.
+            
+            # # 환경의 로봇 개수 확인
+            # num_envs = env.unwrapped.scene.num_envs
+            # device = env.unwrapped.device
+            
+            # # 3. 커맨드 텐서 생성 (모든 환경에 동일한 명령 적용)
+            # cmd_tensor = torch.zeros(num_envs, 3, device=device)
+            # cmd_tensor[:, 0] = delta_vel[0] # Forward/Back (W/S)
+            # cmd_tensor[:, 1] = delta_vel[1] # Left/Right (A/D)
+            # cmd_tensor[:, 2] = delta_ang_vel[2] # Yaw Turn (Q/E)
+            
+            # # 4. Command Manager에 강제 주입
+            # # 주의: env가 Wrapper로 감싸져 있으므로 .unwrapped를 통해 접근해야 합니다.
+            # # "base_velocity"는 config에서 정의한 이름과 일치해야 합니다.
+            # if hasattr(env.unwrapped, "command_manager"):
+            #     env.unwrapped.command_manager.get_command("base_velocity")[:] = cmd_tensor
+            # # ================================
             # agent stepping
             actions = policy(obs)
             # env stepping
@@ -251,6 +290,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             joint_vel = robot.data.joint_vel.cpu().numpy()  # Shape: [num_envs, num_joints]
             current_time = timestep * dt
             
+            # Calculate target positions for all environments
+            # target = default + action * scale
+            try:
+                default_pos = robot.data.default_joint_pos.cpu().numpy() # Shape: [num_envs, num_joints]
+                # Get action scale (assuming uniform scale for now, or try to fetch from config)
+                action_scale = 1.0
+                if hasattr(env.unwrapped, "action_manager"):
+                     term = env.unwrapped.action_manager._terms.get("joint_pos")
+                     if term and hasattr(term.cfg, "scale"):
+                         action_scale = term.cfg.scale
+                
+                # actions shape: [num_envs, num_actions]
+                actions_np = actions.cpu().numpy()
+                target_pos_all = default_pos + actions_np * action_scale
+            except Exception:
+                target_pos_all = np.zeros_like(joint_pos)
+
             # Log data for each environment
             for env_idx in range(env.unwrapped.scene.num_envs):
                 row_data = {
@@ -258,9 +314,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     'time': current_time
                 }
                 
-                # Add joint positions
+                # Add joint positions, targets, and velocities
                 for joint_idx, joint_name in enumerate(robot.data.joint_names):
                     row_data[f"{joint_name}_pos"] = joint_pos[env_idx, joint_idx]
+                    row_data[f"{joint_name}_target_pos"] = target_pos_all[env_idx, joint_idx]
                     row_data[f"{joint_name}_vel"] = joint_vel[env_idx, joint_idx]
                 
                 joint_writers[env_idx].writerow(row_data)
