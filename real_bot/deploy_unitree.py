@@ -7,6 +7,16 @@ import numpy as np
 import onnxruntime as ort
 from scipy.spatial.transform import Rotation as R
 
+
+# ROS 2 Imports
+try:
+    import rclpy
+    from rclpy.node import Node
+    from geometry_msgs.msg import Twist
+except ImportError:
+    print("Warning: ROS 2 (rclpy) not found. Command velocity will be fixed.")
+    rclpy = None
+
 # Unitree SDK Imports
 try:
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
@@ -19,7 +29,8 @@ except ImportError:
     sys.exit(1)
 
 # --- Configuration ---
-POLICY_PATH = "exported/policy.onnx" # Path to the ONNX model
+POLICY_PATH = ".\\sota3-2025-12-08_13-55-31\\exported\\policy.onnx"
+# POLICY_PATH = "exported/policy.onnx" # Path to the ONNX model
 ACTION_SCALE = 0.25
 KP = 25.0
 KD = 0.5
@@ -134,12 +145,40 @@ class RobotController:
         self.last_actions = np.zeros(NUM_ACTIONS, dtype=np.float32) # Initialize last actions to zeros
         self.target_vel = np.array([0.0, 0.0, 0.0], dtype=np.float32) # vx, vy, wz
 
+        # --- ROS 2 Setup ---
+        if rclpy:
+            rclpy.init()
+            self.ros_node = Node('rl_policy_runner')
+            self.ros_sub = self.ros_node.create_subscription(
+                Twist,
+                'cmd_vel',
+                self.cmd_vel_callback,
+                10
+            )
+            # ROS 2 스핀을 별도 스레드에서 실행 (메인 제어 루프 방해 금지)
+            self.ros_thread = threading.Thread(target=rclpy.spin, args=(self.ros_node,), daemon=True)
+            self.ros_thread.start()
+            print("ROS 2 Node initialized. Subscribed to /cmd_vel")
+        else:
+            print("ROS 2 not initialized. Using fixed target velocity.")
+
         print("Waiting for LowState...")
         while True:
             if self.sub.getData() is not None:
                 print("Received LowState.")
                 break
             time.sleep(0.1)
+
+
+    def cmd_vel_callback(self, msg):
+            """ROS 2 cmd_vel callback Function"""
+            vx = msg.linear.x
+            vy = msg.linear.y
+            wz = msg.angular.z
+            # 필요하다면 여기서 속도 제한(clipping)이나 스케일링을 수행하세요.
+            self.target_vel = np.array([vx, vy, wz], dtype=np.float32)
+            # print(f"Cmd Vel Updated: {self.target_vel}")
+
 
     def get_gravity_vector(self, quaternion):
         # Unitree Quat: [w, x, y, z] -> Scipy expects [x, y, z, w]
