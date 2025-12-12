@@ -43,31 +43,59 @@ The output `actions` (12 dims) corresponds to joint position targets (deltas).
 *   **Scale**: Typically 0.25 (defined in `rough_env_cfg.py`).
 *   **Kp/Kd**: Fixed gains (e.g., Kp=25, Kd=0.5).
 
-## 3. Deployment with unitree_sdk2
+## 3. Deployment Methods
 
-The `deploy_unitree.py` script demonstrates how to interface with the robot using `unitree_sdk2` (Python bindings).
+### Option A: ROS 2 Package (Recommended)
 
-### Prerequisites
-*   Unitree Go2 Robot (or simulation).
-*   `unitree_sdk2` python bindings installed.
-*   `onnxruntime` installed (`pip install onnxruntime`).
-*   `numpy`.
+The `go2_rl_deploy` directory contains a ROS 2 package that wraps the deployment logic into a ROS 2 node.
 
-### Usage
+#### Features
+*   **Safety**: Sends `StandDown` command on startup and exit.
+*   **Soft Start**: Gradually interpolates from current lying position to standing position over 3 seconds.
+*   **ROS 2 Integration**: Subscribes to `/cmd_vel` for control commands.
+*   **Auto-Stand**: If no command is received or command is zero, the robot holds its standing position without running the policy inference (saving compute and ensuring stability).
 
-1.  Copy `policy.onnx` to this directory.
-2.  Run the deployment script:
+#### Prerequisites
+*   ROS 2 (Humble or newer recommended)
+*   `unitree_sdk2py` installed
+*   `onnxruntime`, `numpy`, `scipy`
+
+#### Build & Run
+
+1.  **Build the package**:
     ```bash
-    python3 deploy_unitree.py <network_interface>
-    # e.g., python3 deploy_unitree.py eth0
+    cd real_bot
+    colcon build --packages-select go2_rl_deploy
+    source install/setup.bash
     ```
 
-## 4. ROS 2 Integration (Optional)
+2.  **Run the node**:
+    ```bash
+    ros2 run go2_rl_deploy deploy_node --ros-args -p policy_path:=/path/to/policy.onnx -p network_interface:=enp2s0
+    ```
+    *   `policy_path`: Absolute path to your exported ONNX file.
+    *   `network_interface`: Network interface connected to the robot (e.g., `eth0`, `enp2s0`). If not provided, it tries to auto-detect from `CYCLONEDDS_URI`.
 
-If you prefer ROS 2, you can use `unitree_ros` packages.
-*   Create a ROS 2 node that subscribes to `/lowstate` (or similar topic from `unitree_ros_to_real`).
-*   Construct the observation vector.
-*   Run ONNX inference.
-*   Publish to `/lowcmd`.
+3.  **Control**:
+    Publish `geometry_msgs/Twist` to `/cmd_vel` to move the robot.
+    ```bash
+    ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+    ```
 
-Refer to `unitree_ros/unitree_legged_control` for C++ examples of low-level control.
+### Option B: Standalone Script
+
+You can also run the standalone script `deploy_unitree.py` if you don't want to build a ROS 2 package.
+
+```bash
+python3 deploy_unitree.py
+```
+*   Ensure `unitree_sdk2py` and `onnxruntime` are installed.
+*   Edit the script to set `POLICY_PATH` and `network_interface` manually if needed.
+
+## 4. Safety & Troubleshooting
+
+*   **Soft Start**: The robot will take 3 seconds to slowly stand up. Do not send commands during this time.
+*   **E-Stop**: Always have the remote controller ready to press the emergency stop button.
+*   **Suspension Test**: For the first run, suspend the robot so its feet don't touch the ground to verify leg movements.
+*   **Interface**: If the robot doesn't respond, check your network interface name (`ifconfig` or `ip a`) and ensure you can ping the robot.
+

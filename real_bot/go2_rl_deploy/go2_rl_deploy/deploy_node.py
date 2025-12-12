@@ -8,7 +8,6 @@ import onnxruntime as ort
 from scipy.spatial.transform import Rotation as R
 import threading
 import xml.etree.ElementTree as ET
-import paramiko  # SSH Connection
 
 import rclpy
 from rclpy.node import Node
@@ -17,37 +16,36 @@ from geometry_msgs.msg import Twist
 # Unitree SDK Imports
 try:
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
-    from unitree_sdk2py.go2.low_level import unitree_go_msg_dds__LowCmd_
-    from unitree_sdk2py.go2.low_level import unitree_go_msg_dds__LowState_
+    from unitree_sdk2py.idl.default import LowCmd_ as unitree_go_msg_dds__LowCmd_
+    from unitree_sdk2py.idl.default import LowState_ as unitree_go_msg_dds__LowState_
     from unitree_sdk2py.utils.crc import CRC
-    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd__init
+    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as unitree_go_msg_dds__LowCmd__init
     from unitree_sdk2py.go2.sport.sport_client import SportClient
-except ImportError:
-    print("Error: unitree_sdk2py not found. Please install the Unitree SDK 2 Python bindings.")
+except ImportError as e:
+    print(f"Error: unitree_sdk2py not found or failed to import. {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
 # --- Configuration Constants ---
-ACTION_SCALE = 0.25
-KP = 25.0
-KD = 0.5
+ACTION_SCALE = 0.15  # Reduced from 0.25 to reduce excessive movement
+KP = 20.0  # Reduced from 25.0 for softer movement
+KD = 0.8   # Increased from 0.5 for better damping
 DT = 0.02  # Control cycle (50Hz)
 NUM_ACTIONS = 12
 HEIGHT_SCAN_SIZE = 187
 CMD_TIMEOUT = 0.5  # Command timeout in seconds
-SOFT_START_DURATION = 3.5  # Seconds
-
-# Robot SSH Credentials
-ROBOT_IP = "192.168.123.161"
-ROBOT_USER = "unitree"
-ROBOT_PWD = "123"
+SOFT_START_DURATION = 3.0  # Increased from 3.5s for slower startup
 
 # Default Joint Positions (Isaac Lab Order: FL, FR, RL, RR)
+# Modified to stand taller (smaller thigh angle, smaller calf angle magnitude)
 DEFAULT_JOINT_POS = np.array([
-    0.1, 0.8, -1.5,   # FL
+    0.1, 0.8, -1.5,   # FL (hip, thigh, calf)
     -0.1, 0.8, -1.5,  # FR
     0.1, 1.0, -1.5,   # RL
     -0.1, 1.0, -1.5   # RR
 ], dtype=np.float32)
+
 
 # Indices mapping
 # Unitree (FR, FL, RR, RL) <-> Isaac (FL, FR, RL, RR)
@@ -109,48 +107,6 @@ def get_network_interface(input_str):
             pass
     return input_str
 
-class ServiceManager:
-    def __init__(self, ip, user, pwd, logger):
-        self.ip = ip
-        self.user = user
-        self.pwd = pwd
-        self.logger = logger
-        self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-    def connect(self):
-        try:
-            self.client.connect(self.ip, username=self.user, password=self.pwd, timeout=3.0)
-            return True
-        except Exception as e:
-            self.logger.error(f"SSH Connection failed: {e}")
-            return False
-
-    def execute_command(self, command):
-        if not self.connect(): return
-        try:
-            # sudo 명령어를 위해 비밀번호 파이핑
-            full_cmd = f"echo {self.pwd} | sudo -S {command}"
-            stdin, stdout, stderr = self.client.exec_command(full_cmd)
-            output = stdout.read().decode()
-            error = stderr.read().decode()
-            if output: self.logger.info(f"SSH Output: {output}")
-            if error and "password" not in error: # sudo prompt warning 제외
-                self.logger.warn(f"SSH Error: {error}")
-        except Exception as e:
-            self.logger.error(f"Command execution failed: {e}")
-        finally:
-            self.client.close()
-
-    def kill_sport_mode(self):
-        self.logger.info("Step 2: Killing sport_mode service (pkill)...")
-        self.execute_command("pkill -f sport_mode")
-        time.sleep(1.0) # 프로세스 종료 대기
-
-    def start_sport_mode(self):
-        self.logger.info("Step 5: Restoring sport_mode service...")
-        self.execute_command("systemctl start sport_mode")
-
 class RobotController(Node):
     def __init__(self):
         super().__init__('go2_rl_deploy_node')
@@ -189,16 +145,9 @@ class RobotController(Node):
             sport_client.StandDown()
             self.get_logger().info("Waiting 3 seconds for robot to lie down...")
             time.sleep(3.0)
-            
-            self.get_logger().info("Sending Damp command...")
-            sport_client.Damp()
-            time.sleep(1.0)
+
         except Exception as e:
             self.get_logger().warn(f"Failed to send StandDown (Robot might be already in low level?): {e}")
-
-        # --- Step 2: Kill Service ---
-        self.service_manager = ServiceManager(ROBOT_IP, ROBOT_USER, ROBOT_PWD, self.get_logger())
-        self.service_manager.kill_sport_mode()
 
         # --- Step 3: Joint Mapping ---
         # Isaac Lab (FL, FR, RL, RR) -> Unitree (FR, FL, RR, RL)
@@ -215,15 +164,15 @@ class RobotController(Node):
         self.cmd_msg = unitree_go_msg_dds__LowCmd__init()
         self.cmd_msg.head[0] = 0xFE
         self.cmd_msg.head[1] = 0xEF
-        self.cmd_msg.levelFlag = 0xFF
+        self.cmd_msg.level_flag = 0xFF
         self.cmd_msg.gpio = 0
         for i in range(20):
-            self.cmd_msg.motorCmd[i].mode = 0x01 # Servo Mode
-            self.cmd_msg.motorCmd[i].q = 0.0
-            self.cmd_msg.motorCmd[i].dq = 0.0
-            self.cmd_msg.motorCmd[i].Kp = 0.0
-            self.cmd_msg.motorCmd[i].Kd = 0.0
-            self.cmd_msg.motorCmd[i].tau = 0.0
+            self.cmd_msg.motor_cmd[i].mode = 0x01 # Servo Mode
+            self.cmd_msg.motor_cmd[i].q = 0.0
+            self.cmd_msg.motor_cmd[i].dq = 0.0
+            self.cmd_msg.motor_cmd[i].kp = 0.0
+            self.cmd_msg.motor_cmd[i].kd = 0.0
+            self.cmd_msg.motor_cmd[i].tau = 0.0
 
         # Load Policy
         self.get_logger().info(f"Loading policy from {self.policy_path}...")
@@ -281,12 +230,12 @@ class RobotController(Node):
 
     def get_observation(self, state):
         base_lin_vel = np.zeros(3, dtype=np.float32)
-        base_ang_vel = np.array(state.imu.gyroscope, dtype=np.float32)
-        projected_gravity = self.get_gravity_vector(state.imu.quaternion)
+        base_ang_vel = np.array(state.imu_state.gyroscope, dtype=np.float32)
+        projected_gravity = self.get_gravity_vector(state.imu_state.quaternion)
         commands = self.target_vel 
         
-        q_raw = np.array([m.q for m in state.motorState[:12]], dtype=np.float32)
-        dq_raw = np.array([m.dq for m in state.motorState[:12]], dtype=np.float32)
+        q_raw = np.array([m.q for m in state.motor_state[:12]], dtype=np.float32)
+        dq_raw = np.array([m.dq for m in state.motor_state[:12]], dtype=np.float32)
         
         q_isaac = q_raw[UNITREE_TO_ISAAC_IDX]
         dq_isaac = dq_raw[UNITREE_TO_ISAAC_IDX]
@@ -317,7 +266,7 @@ class RobotController(Node):
         
         # 1. 초기 상태 읽기 (Soft Start 시작점)
         first_state = self.sub.Read()
-        current_joints = np.array([m.q for m in first_state.motorState[:12]], dtype=np.float32)
+        current_joints = np.array([m.q for m in first_state.motor_state[:12]], dtype=np.float32)
         
         self.get_logger().info(f"Step 4: Starting Soft Start ({SOFT_START_DURATION}s)...")
         
@@ -332,11 +281,11 @@ class RobotController(Node):
             target_q = (1 - t) * current_joints + t * self.default_joint_pos_mapped
             
             for i in range(12):
-                self.cmd_msg.motorCmd[i].q = target_q[i]
-                self.cmd_msg.motorCmd[i].dq = 0.0
-                self.cmd_msg.motorCmd[i].Kp = KP * t  # Kp를 0에서 목표값까지 서서히 증가
-                self.cmd_msg.motorCmd[i].Kd = KD
-                self.cmd_msg.motorCmd[i].tau = 0.0
+                self.cmd_msg.motor_cmd[i].q = target_q[i]
+                self.cmd_msg.motor_cmd[i].dq = 0.0
+                self.cmd_msg.motor_cmd[i].kp = KP * t  # Kp를 0에서 목표값까지 서서히 증가
+                self.cmd_msg.motor_cmd[i].kd = KD
+                self.cmd_msg.motor_cmd[i].tau = 0.0
             
             self.cmd_msg.crc = CRC().Crc(self.cmd_msg)
             self.pub.Write(self.cmd_msg)
@@ -369,11 +318,11 @@ class RobotController(Node):
                     q_target_unitree = q_target_isaac[ISAAC_TO_UNITREE_IDX]
                     
                     for i in range(12):
-                        self.cmd_msg.motorCmd[i].q = q_target_unitree[i]
-                        self.cmd_msg.motorCmd[i].dq = 0.0
-                        self.cmd_msg.motorCmd[i].Kp = KP
-                        self.cmd_msg.motorCmd[i].Kd = KD
-                        self.cmd_msg.motorCmd[i].tau = 0.0
+                        self.cmd_msg.motor_cmd[i].q = q_target_unitree[i]
+                        self.cmd_msg.motor_cmd[i].dq = 0.0
+                        self.cmd_msg.motor_cmd[i].kp = KP
+                        self.cmd_msg.motor_cmd[i].kd = KD
+                        self.cmd_msg.motor_cmd[i].tau = 0.0
                     
                     self.cmd_msg.crc = CRC().Crc(self.cmd_msg)
                     self.pub.Write(self.cmd_msg)
@@ -389,9 +338,15 @@ class RobotController(Node):
         if self.control_thread.is_alive():
             self.control_thread.join()
         
-        # Step 5: Auto Restore
-        if hasattr(self, 'service_manager'):
-            self.service_manager.start_sport_mode()
+        self.get_logger().info("Shutting down... Sending StandDown command.")
+        try:
+            sport_client = SportClient()
+            sport_client.SetTimeout(5.0)
+            sport_client.Init()
+            sport_client.StandDown()
+            time.sleep(1.0)
+        except Exception as e:
+            self.get_logger().warn(f"Failed to send StandDown on exit: {e}")
             
         super().destroy_node()
 
@@ -404,7 +359,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
