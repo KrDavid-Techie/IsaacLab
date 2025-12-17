@@ -92,6 +92,11 @@ isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Veloc
 isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Velocity-Rough-Unitree-Go2-v0  --num_envs 20 --checkpoint C:\Users\User\github\IsaacLab\logs\rsl_rl\unitree_go2_rough\2025-12-04_18-29-47\model_4999.pt
 #False
 ```
+
+```bash
+isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Velocity-Rough-Unitree-Go2-v0  --num_envs 100 --checkpoint C:\Users\User\github\IsaacLab\logs\rsl_rl\unitree_go2_rough\2025-12-08_13-55-31\model_1499.pt
+#False # Best SOTA
+```
 ---
 ---
 ---
@@ -106,6 +111,35 @@ isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Veloc
 isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Velocity-Stair-Unitree-Go2-v0  --num_envs 10 --checkpoint C:\Users\User\github\IsaacLab\logs\rsl_rl\unitree_go2_stair\2025-12-04_10-18-28\model_999.pt
 #False
 ```
+---
+---
+---
+---
+---
+---------------
+---
+---
+---
+---
+---
+# RAM
+1. 
+```bash
+isaaclab.bat -p scripts/reinforcement_learning/rma/train.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --headless
+```
+2. 
+```bash
+isaaclab.bat -p scripts/reinforcement_learning/rma/train_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --load_run unitree_go2_rough_rma_phase1
+3. 
+```bash
+isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --num_envs 32 --run_phase2 unitree_go2_rough_rma_phase2
+```
+---
+---
+---
+---
+---
+---------------
 ---
 ---
 ---
@@ -130,5 +164,4 @@ isaaclab.bat -p -m tensorboard.main --logdir=logs
 |     5     | joint_vel                      |     (12,)     |
 |     6     | actions                        |     (12,)     |
 |     7     | height_scan                    |     (187,)    |
-|     8     | lidar_scan                     |    (2864,)    |
 +-----------+--------------------------------+---------------+

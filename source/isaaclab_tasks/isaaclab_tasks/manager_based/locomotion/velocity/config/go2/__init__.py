@@ -65,3 +65,23 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_stair_ppo_cfg.yaml",
     },
 )
+gym.register(
+    id='Isaac-Velocity-Rough-Unitree-Go2-RMA-v0',
+    entry_point='isaaclab.envs:ManagerBasedRLEnv',
+    disable_env_checker=True,
+    kwargs={
+        'env_cfg_entry_point': f'{__name__}.rough_env_cfg:UnitreeGo2RoughEnvCfg_RMA',
+        'rsl_rl_cfg_entry_point': f'{agents.__name__}.rsl_rl_ppo_cfg:UnitreeGo2RoughRMAPPORunnerCfg',
+    },
+)
+
+gym.register(
+    id='Isaac-Velocity-Rough-Unitree-Go2-RMA-Distill-v0',
+    entry_point='isaaclab.envs:ManagerBasedRLEnv',
+    disable_env_checker=True,
+    kwargs={
+        'env_cfg_entry_point': f'{__name__}.rough_env_cfg:UnitreeGo2RoughEnvCfg_RMA',
+        'rsl_rl_cfg_entry_point': f'{agents.__name__}.rsl_rl_ppo_cfg:UnitreeGo2RoughRMADistillationRunnerCfg',
+    },
+)
+

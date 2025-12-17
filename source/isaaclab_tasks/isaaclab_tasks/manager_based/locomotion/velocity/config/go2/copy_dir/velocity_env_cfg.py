@@ -63,7 +63,9 @@ class MySceneCfg(InteractiveSceneCfg):
     )
     # robots
     robot: ArticulationCfg = MISSING
+    
     # sensors
+    # height scanner = None
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
@@ -72,8 +74,28 @@ class MySceneCfg(InteractiveSceneCfg):
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
+    # lidar_scanner = None
+    # lidar_scanner = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/Head_lower",
+    #     offset=RayCasterCfg.OffsetCfg(pos=(0, 0, 0.5)),
+    #     ray_alignment="yaw",
+    #     pattern_cfg=patterns.LidarPatternCfg(
+    #         channels=8,
+    #         vertical_fov_range=[-45.0, 45.0], 
+    #         horizontal_fov_range=[-180.0, 180.0], 
+    #         horizontal_res=1.0
+    #     ),
+    #     max_distance=1.0,
+    #     debug_vis=False,
+    #     mesh_prim_paths=["/World/ground"],
+    # )
+    # contact forces = None
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3, 
+        track_air_time=True
+    )
     
-    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
@@ -100,7 +122,10 @@ class CommandsCfg:
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0), lin_vel_y=(-1.0, 1.0), ang_vel_z=(-1.0, 1.0), heading=(-math.pi, math.pi)
+            lin_vel_x=(-1.0, 1.0),
+            lin_vel_y=(-1.0, 1.0),
+            ang_vel_z=(-1.0, 1.0),
+            heading=(-math.pi, math.pi)
         ),
     )
 
@@ -133,38 +158,17 @@ class ObservationsCfg:
             noise=Unoise(n_min=-0.1, n_max=0.1),
             clip=(-1.0, 1.0),
         )
+        # lidar_scan = ObsTerm(
+        #     func=mdp.lidar_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("lidar_scanner")},
+        #     noise=Unoise(n_min=-0.1, n_max=0.1),
+        #     clip=(-1.0, 1.0),
+        # )
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-    # Custom Critic
-    @configclass
-    class CriticCfg(ObsGroup):
-        """Observations for critic group."""
-        
-        # Extended observations for critic
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
-        projected_gravity = ObsTerm(
-            func=mdp.projected_gravity,
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-        )
-        velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
-        actions = ObsTerm(func=mdp.last_action)
-        height_scan = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            clip=(-1.0, 1.0),
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-    
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -245,10 +249,14 @@ class RewardsCfg:
     """Reward terms for the MDP."""
     # -- task
     track_lin_vel_xy_exp = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_lin_vel_xy_exp,
+        weight=1.0,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=0.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_ang_vel_z_exp, 
+        weight=0.5, 
+        params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
     # -- penalties
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
@@ -273,43 +281,14 @@ class RewardsCfg:
     # -- optional penalties
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=0.0)
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=0.0)
-    base_height = RewTerm(
-        func=mdp.base_height_l2,
+    stand_still_joint_deviation_l1 = RewTerm(
+        func=mdp.stand_still_joint_deviation_l1,
+        weight=0.0,
         params={
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "target_height": 0.32,   
+            "command_name": "base_velocity", 
         },
-        weight=-0.5
     )
     
-    # -- custom rewards from rough_env (Go2-specific)
-    # Hip deviation penalty - critical for Go2 stability
-    hip_deviation = RewTerm(
-        func=mdp.joint_deviation_l1,
-        weight=-0.18,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint"])},
-    )
-    
-    # Joint deviation for thigh and calf joints
-    joint_deviation = RewTerm(
-        func=mdp.joint_deviation_l1,
-        weight=-0.02,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_thigh_joint", ".*_calf_joint"])},
-    )
-    
-    # Action smoothness penalty
-    action_smoothness = RewTerm(
-        func=mdp.action_rate_l2,
-        weight=-0.01,
-    )
-    
-    # Joint power penalty
-    joint_power = RewTerm(
-        func=mdp.joint_torques_l2,
-        weight=-2e-5,
-        params={"asset_cfg": SceneEntityCfg("robot")},
-    )
-
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
@@ -363,12 +342,15 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+        # if self.scene.lidar_scanner is not None:
+        #     self.scene.lidar_scanner.update_period = self.decimation * self.sim.dt
 
         # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
         # this generates terrains with increasing difficulty and is useful for training

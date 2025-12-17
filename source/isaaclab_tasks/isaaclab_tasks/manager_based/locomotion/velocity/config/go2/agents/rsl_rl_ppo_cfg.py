@@ -5,7 +5,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlDistillationRunnerCfg, RslRlDistillationAlgorithmCfg, RslRlDistillationStudentTeacherCfg
 
 
 @configclass
@@ -79,3 +79,25 @@ class UnitreeGo2StairPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=0.8,
     )
+
+@configclass
+class UnitreeGo2RoughRMAPPORunnerCfg(UnitreeGo2RoughPPORunnerCfg):
+    experiment_name = 'unitree_go2_rough_rma_phase1'
+
+@configclass
+class UnitreeGo2RoughRMADistillationRunnerCfg(RslRlDistillationRunnerCfg):
+    experiment_name = 'unitree_go2_rough_rma_phase2'
+    load_run = 'unitree_go2_rough_rma_phase1'
+    
+    policy = RslRlDistillationStudentTeacherCfg(
+        student_hidden_dims=[256, 128, 64],
+        teacher_hidden_dims=[512, 256, 128],
+        activation='elu',
+        student_obs_normalization=False,
+        teacher_obs_normalization=False,
+    )
+    algorithm = RslRlDistillationAlgorithmCfg(
+        num_learning_epochs=5,
+        learning_rate=1e-3,
+    )
+

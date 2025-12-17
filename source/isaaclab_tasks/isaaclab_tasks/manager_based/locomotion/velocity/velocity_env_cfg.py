@@ -23,6 +23,9 @@ from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
+from isaaclab.envs import ManagerBasedEnv
+from isaaclab.assets import Articulation
+import torch
 
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
 
@@ -304,6 +307,7 @@ class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+
 ##
 # Environment configuration
 ##
@@ -360,3 +364,74 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         else:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False
+
+def body_mass(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+    masses = asset.root_physx_view.get_masses()
+    masses = masses.view(env.num_envs, -1)
+    return masses[:, asset_cfg.body_ids].to(env.device)
+
+def body_friction(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+    materials = asset.root_physx_view.get_material_properties()
+    materials = materials.view(env.num_envs, -1, 3)
+    return materials[..., 0].mean(dim=1, keepdim=True).to(env.device)
+
+@configclass
+class LocomotionVelocityRoughEnvCfg_RMA(LocomotionVelocityRoughEnvCfg):
+    @configclass
+    class ObservationsCfg(ObservationsCfg):
+        @configclass
+        class PolicyCfg(ObservationsCfg.PolicyCfg):
+            # Add extrinsics
+            base_mass = ObsTerm(func=body_mass, params={'asset_cfg': SceneEntityCfg('robot', body_names='base')})
+            friction = ObsTerm(func=body_friction, params={'asset_cfg': SceneEntityCfg('robot')})
+            
+        policy: PolicyCfg = PolicyCfg()
+        
+        @configclass
+        class PrivilegedCfg(ObsGroup):
+            # Privileged info (targets for adaptation)
+            base_mass = ObsTerm(func=body_mass, params={'asset_cfg': SceneEntityCfg('robot', body_names='base')})
+            friction = ObsTerm(func=body_friction, params={'asset_cfg': SceneEntityCfg('robot')})
+
+        privileged: PrivilegedCfg = PrivilegedCfg()
+        
+        @configclass
+        class ProprioCfg(ObsGroup):
+            # Proprioception (input for adaptation)
+            base_lin_vel = ObsTerm(
+                func=mdp.base_lin_vel, 
+                noise=Unoise(n_min=-0.1, n_max=0.1)
+                )
+            base_ang_vel = ObsTerm(
+                func=mdp.base_ang_vel, 
+                noise=Unoise(n_min=-0.2, n_max=0.2)
+                )
+            projected_gravity = ObsTerm(
+                func=mdp.projected_gravity, 
+                noise=Unoise(n_min=-0.05, n_max=0.05)
+                )
+            velocity_commands = ObsTerm(
+                func=mdp.generated_commands, 
+                params={'command_name': 'base_velocity'}
+                )
+            joint_pos = ObsTerm(
+                func=mdp.joint_pos_rel, 
+                noise=Unoise(n_min=-0.01, n_max=0.01)
+                )
+            joint_vel = ObsTerm(
+                func=mdp.joint_vel_rel, 
+                noise=Unoise(n_min=-1.5, n_max=1.5)
+                )
+            actions = ObsTerm(
+                func=mdp.last_action
+                )
+            history_length = 50
+            flatten_history_dim = True
+            enable_corruption = True
+            concatenate_terms = True
+
+        proprio: ProprioCfg = ProprioCfg()
+    
+    observations: ObservationsCfg = ObservationsCfg()
