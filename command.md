@@ -123,16 +123,27 @@ isaaclab.bat -p scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Veloc
 ---
 ---
 # RAM
-1. 
+1. Train Teacher (Phase1)
 ```bash
-isaaclab.bat -p scripts/reinforcement_learning/rma/train.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --headless
+isaaclab.bat -p scripts/reinforcement_learning/rma/train.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --headless --num_envs 4096 --max_iterations 1500
+
+isaaclab.bat -p scripts/reinforcement_learning/rma/train.py --task Isaac-Velocity-Ship-Unitree-Go2-RMA-v0 --headless --num_envs 4096 --max_iterations 1500
 ```
-2. 
+2. Train adaptation (Phase2)
 ```bash
-isaaclab.bat -p scripts/reinforcement_learning/rma/train_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --load_run unitree_go2_rough_rma_phase1
-3. 
+isaaclab.bat -p scripts/reinforcement_learning/rma/train_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --load_run unitree_go2_rough_rma_phase1 --headless --num_envs 4096 --max_iterations 1500
+
+isaaclab.bat -p scripts/reinforcement_learning/rma/train_adapt.py --task Isaac-Velocity-Ship-Unitree-Go2-RMA-v0 --load_run unitree_go2_ship_rma_phase1 --headless --num_envs 4096 --max_iterations 1500
+```
+3. Run Play
+```bash 
+isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --num_envs 64 --run_phase2 unitree_go2_rough_rma_phase2 --video --video_length 1000
+
+isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Ship-Unitree-Go2-RMA-v0 --num_envs 64 --run_phase2 unitree_go2_ship_rma_phase2 --video --video_length 1000
+```
+4. Export to Onnx
 ```bash
-isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --num_envs 32 --run_phase2 unitree_go2_rough_rma_phase2
+isaaclab.bat -p scripts/reinforcement_learning/rma/export_adapt.py --run_phase2 2025-12-18_08-15-38
 ```
 ---
 ---
@@ -149,7 +160,17 @@ isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Ve
 ```bash
 isaaclab.bat -p -m tensorboard.main --logdir=logs
 ```
+---
+---
+---
+---
+---
 ---------------
+---
+---
+---
+---
+---
 # [INFO] Observation Manager: <ObservationManager> contains 1 groups.
 +------------------------------------------------------------+
 | Active Observation Terms in Group: 'policy' (shape: (3099,)) |

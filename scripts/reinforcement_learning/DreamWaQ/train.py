@@ -19,9 +19,9 @@ import cli_args  # isort: skip
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=100, help="Interval between video recordings (in steps).")
+parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
 parser.add_argument("--num_envs", type=int, default=10, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument("--task", type=str, default="Isaac-Velocity-Rough-Go2-DreamWaQ-v0", help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
@@ -77,8 +77,66 @@ import os
 import torch
 from datetime import datetime
 
+# Imports for Environment Configuration
+from isaaclab.utils import configclass
+from isaaclab_tasks.manager_based.locomotion.velocity.config.go2.rough_env_cfg import UnitreeGo2RoughEnvCfg
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.envs import mdp
+from isaaclab.envs import ManagerBasedEnv
+
+# Register DreamWaQ agent
+from agent_cfg import DreamWaQPPORunnerCfg
+
+# --- Define Environment Config locally to avoid using env_cfg.py ---
+
+def scaled_commands(env: ManagerBasedEnv, command_name: str = "base_velocity") -> torch.Tensor:
+    """Return scaled commands."""
+    commands = env.command_manager.get_command(command_name)
+    # Scales from LeggedRobotCfg: lin_vel=2.0, ang_vel=0.25
+    # commands are [lin_vel_x, lin_vel_y, ang_vel_yaw]
+    scales = torch.tensor([2.0, 2.0, 0.25], device=commands.device)
+    return commands[:, :3] * scales
+
+@configclass
+class DreamWaQPolicyCfg(ObsGroup):
+    """DreamWaQ policy observations."""
+    base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.25)
+    projected_gravity = ObsTerm(func=mdp.projected_gravity)
+    velocity_commands = ObsTerm(func=scaled_commands)
+    joint_pos = ObsTerm(func=mdp.joint_pos_rel, scale=1.0)
+    joint_vel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05)
+    actions = ObsTerm(func=mdp.last_action)
+
+    def __post_init__(self):
+        self.history_length = 5
+        self.flatten_history_dim = True
+
+@configclass
+class UnitreeGo2DreamWaQEnvCfg(UnitreeGo2RoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        
+        # Define DreamWaQ observations
+        # 45 dims: ang_vel(3), gravity(3), commands(3), dof_pos(12), dof_vel(12), actions(12)
+        # History: 5
+        self.observations.policy = DreamWaQPolicyCfg()
+
+# -------------------------------------------------------------------
+
+gym.register(
+    id="Isaac-Velocity-Rough-Go2-DreamWaQ-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": UnitreeGo2DreamWaQEnvCfg,
+        "rsl_rl_cfg_entry_point": DreamWaQPPORunnerCfg,
+    },
+)
+
 import omni
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+from rsl_rl.runners import DistillationRunner
+from rsl_rl_dreamwaq.on_policy_runner import OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -136,7 +194,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         agent_cfg.seed = seed
 
     # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rma", agent_cfg.experiment_name)
+    log_root_path = os.path.join("logs", "DreamWaQ", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}

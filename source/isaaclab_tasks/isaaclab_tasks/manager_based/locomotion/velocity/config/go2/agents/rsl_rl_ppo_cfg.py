@@ -101,3 +101,27 @@ class UnitreeGo2RoughRMADistillationRunnerCfg(RslRlDistillationRunnerCfg):
         learning_rate=1e-3,
     )
 
+@configclass
+class UnitreeGo2ShipPPORunnerCfg(UnitreeGo2RoughPPORunnerCfg):
+    experiment_name = "unitree_go2_ship"
+
+@configclass
+class UnitreeGo2ShipRMAPPORunnerCfg(UnitreeGo2ShipPPORunnerCfg):
+    experiment_name = "unitree_go2_ship_rma_phase1"
+
+@configclass
+class UnitreeGo2ShipRMADistillationRunnerCfg(RslRlDistillationRunnerCfg):
+    experiment_name = 'unitree_go2_ship_rma_phase2'
+    load_run = 'unitree_go2_ship_rma_phase1'
+    
+    policy = RslRlDistillationStudentTeacherCfg(
+        student_hidden_dims=[256, 128, 64],
+        teacher_hidden_dims=[512, 256, 128],
+        activation='elu',
+        student_obs_normalization=False,
+        teacher_obs_normalization=False,
+    )
+    algorithm = RslRlDistillationAlgorithmCfg(
+        num_learning_epochs=5,
+        learning_rate=1e-3,
+    )

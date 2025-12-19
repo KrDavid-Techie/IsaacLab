@@ -36,11 +36,18 @@ parser.add_argument(
 parser.add_argument(
     "--ckpt_phase1", type=str, default=None, help="Checkpoint file for Teacher Policy. Optional if teacher_policy_info.txt exists."
 )
+parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
+parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+
+# always enable cameras to record video
+if args_cli.video:
+    args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
@@ -82,12 +89,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg)
-    
-    # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-
     # ---------------------------------------------------------
     # 0. Locate Phase 2 Run and Metadata
     # ---------------------------------------------------------
@@ -105,6 +106,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
             run_path_p2 = os.path.join(run_path_p2, subdirs[-1])
             
     print(f"[INFO] Phase 2 Run Directory: {run_path_p2}")
+
+    # create isaac environment
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # wrap for video recording
+    if args_cli.video:
+        video_kwargs = {
+            "video_folder": os.path.join(run_path_p2, "videos", "play"),
+            "step_trigger": lambda step: step == 0,
+            "video_length": args_cli.video_length,
+            "disable_logger": True,
+        }
+        print("[INFO] Recording videos during inference.")
+        env = gym.wrappers.RecordVideo(env, **video_kwargs)
+    
+    # wrap around environment for rsl-rl
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # ---------------------------------------------------------
     # 1. Load Teacher Policy (Phase 1)
@@ -169,7 +187,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     # ---------------------------------------------------------
     # 2. Load Adaptation Module (Phase 2)
     # ---------------------------------------------------------
-    # We already located run_path_p2 in step 0
+    # We already located `run_path_p2` in step 0
     
     adapt_ckpt_path = os.path.join(run_path_p2, args_cli.ckpt_phase2)
     print(f"[INFO]: Loading Adaptation Module from: {adapt_ckpt_path}")
@@ -202,10 +220,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
             proprio_hist = obs["proprio"]
             policy_obs_gt = obs["policy"] # Contains Ground Truth Extrinsics
             
-            # B. Predict Extrinsics
+            # B. Predict Extrinsics (환경 추론)
             pred_extrinsics = adaptation_module(proprio_hist)
             
-            # C. Construct Student Observation
+            # C. Construct Student Observation (학생 관측 구성)
             # We assume extrinsics are at the END of the policy observation vector
             # Split GT obs
             split_idx = policy_obs_gt.shape[1] - privileged_dim
@@ -220,7 +238,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
             else:
                 student_obs = student_obs_raw
             
-            # E. Policy Inference
+            # E. Policy Inference (행동 출력)
             # RSL-RL ActorCritic expects a dictionary if obs_groups is used
             if hasattr(teacher_policy, "act"):
                 teacher_input = {"policy": student_obs}

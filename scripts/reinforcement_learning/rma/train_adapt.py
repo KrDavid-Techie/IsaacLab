@@ -26,7 +26,7 @@ parser.add_argument(
 parser.add_argument(
     "--video_interval", type=int, default=100, help="Interval between video recordings (in steps).")
 parser.add_argument(
-    "--num_envs", type=int, default=4096, help="Number of environments to simulate.")
+    "--num_envs", type=int, default=10, help="Number of environments to simulate.")
 parser.add_argument(
     "--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -34,7 +34,7 @@ parser.add_argument(
 parser.add_argument(
     "--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument(
-    "--max_iterations", type=int, default=1500, help="Training iterations.")
+    "--max_iterations", type=int, default=100, help="Training iterations.")
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes.")
 # append RSL-RL cli arguments
@@ -87,7 +87,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
     # specify directory for logging experiments
     # Save to logs/rma with _phase2 suffix to distinguish from Phase 1
-    log_root_path = os.path.join("logs", "rma", f"unitree_go2_rough_rma_phase2")
+    # Use experiment_name from agent_cfg if available, otherwise default to unitree_go2_rough_rma_phase2
+    experiment_name = getattr(agent_cfg, "experiment_name", "unitree_go2_rough_rma_phase2")
+    # If the experiment name is phase 1, change it to phase 2 for saving
+    if "phase1" in experiment_name:
+        experiment_name = experiment_name.replace("phase1", "phase2")
+    elif "phase2" not in experiment_name:
+        experiment_name = f"{experiment_name}_phase2"
+        
+    log_root_path = os.path.join("logs", "rma", experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

@@ -247,8 +247,6 @@ class EventCfg:
         params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
     )
 
-    randomize_gravity = None
-
 @configclass
 class RewardsCfg:
     """Reward terms for the MDP."""
