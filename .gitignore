@@ -69,6 +69,19 @@ tests/
 
 # Docker history
 .isaac-lab-docker-history
-.github/copilot-instructions.md
+
+# GitHub Actions
+.github
 
 ./legged-loco
+
+# Evaluation
+scripts/evaluation/result
+**/*.txt
+**/*.out
+**/*.csv
+**/*.pkl
+**/*.pth
+**/*.pt
+scripts/evaluation/go2_rl_deploy
+scripts/evaluation/go2_logger
