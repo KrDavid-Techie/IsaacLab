@@ -159,6 +159,10 @@ isaaclab.bat -p scripts/reinforcement_learning/rma/export_adapt.py --run_phase2 
 # Note 
 ```bash
 isaaclab.bat -p -m tensorboard.main --logdir=logs
+``` 
+```bash
+isaaclab.bat -p scripts/evaluation/sim_eval.py --num_envs 1 --evaluation_time 5.0
+isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file < PATH_TO_PKL > --real_bag < PATH_TO_MCAP >
 ```
 ---
 ---
