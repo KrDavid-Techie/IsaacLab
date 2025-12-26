@@ -85,3 +85,4 @@ scripts/evaluation/result
 **/*.pt
 scripts/evaluation/go2_rl_deploy
 scripts/evaluation/go2_logger
+scripts/evaluation/logs

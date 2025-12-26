@@ -373,11 +373,46 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     with open(sim_log_file_path, "wb") as f:
         pickle.dump(sim_log, f)
 
+    # Save Sim Log to CSV (New)
+    csv_output_dir = os.path.join(eval_output_dir, "csv")
+    os.makedirs(csv_output_dir, exist_ok=True)
+    sim_log_csv_path = os.path.join(csv_output_dir, f"sim_log_{agent_cfg.experiment_name}_{date_str}.csv")
+    
+    
+    with open(sim_log_csv_path, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        # Header
+        header = ['timestamp']
+        header += [f'cmd_vel_{i}' for i in range(3)]
+        header += [f'base_lin_vel_{i}' for i in range(3)]
+        header += [f'dof_pos_{i}' for i in range(12)]
+        header += [f'dof_vel_{i}' for i in range(12)]
+        header += [f'dof_torque_{i}' for i in range(12)]
+        writer.writerow(header)
+        
+        # Helper function for formatting
+        def fmt(val):
+            if isinstance(val, (int, float, np.float32, np.float64)):
+                return round(float(val), 5)
+            return val
+
+        # Rows
+        num_rows = len(sim_log['timestamp'])
+        for i in range(num_rows):
+            row = [fmt(sim_log['timestamp'][i])]
+            # Handle potential numpy arrays or lists
+            row += [fmt(x) for x in sim_log['command_vel'][i]]
+            row += [fmt(x) for x in sim_log['base_lin_vel'][i]]
+            row += [fmt(x) for x in sim_log['dof_pos'][i]]
+            row += [fmt(x) for x in sim_log['dof_vel'][i]]
+            row += [fmt(x) for x in sim_log['dof_torque'][i]]
+            writer.writerow(row)
+
     metrics_file_path = os.path.join(pkl_output_dir, f"evaluation_metrics_{agent_cfg.experiment_name}_{date_str}.pkl")
     with open(metrics_file_path, "wb") as f:
         pickle.dump(metrics, f)
         
-    # Save to CSV
+    # Save to CSV (Summary)
     csv_filename = f"evaluation_results_{agent_cfg.experiment_name}.csv"
     csv_path = os.path.join(eval_output_dir, csv_filename)
     file_exists = os.path.isfile(csv_path)
