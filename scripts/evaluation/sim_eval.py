@@ -212,9 +212,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
         
         # step the environment
-        # Note: RslRlVecEnvWrapper.step returns (obs, rew, terminated, truncated, info)
-        # However, some older versions or wrappers might return (obs, rew, done, info)
-        # Let's handle both cases
         step_result = env.step(actions)
         if len(step_result) == 5:
             obs, _, _, _, _ = step_result
@@ -249,7 +246,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         
         # 1. Velocity Tracking Error
         # Get measured velocity (Base frame)
-        # robot.data.root_lin_vel_b is base linear velocity in base frame
         measured_vel = robot.data.root_lin_vel_b
         
         # cmd_vel is usually (num_envs, 3) [vx, vy, w] or similar. 
@@ -360,8 +356,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     # Save to eval_output_dir (scripts/evaluation)
-    # Create a subfolder for the experiment if desired, or just save in evaluation folder
-    # User requested: "evaluation 폴더 안에 있었으면 좋겠어"
     
     # Create pkl directory
     pkl_output_dir = os.path.join(eval_output_dir, "pkl")

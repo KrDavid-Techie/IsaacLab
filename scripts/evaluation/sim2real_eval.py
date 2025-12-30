@@ -126,11 +126,13 @@ class CsvLogLoader:
         data = {
             "timestamp": [],
             "base_lin_vel": [],
+            "base_ang_vel": [],
             "dof_pos": [],
             "dof_vel": [],
             "dof_torque": [],
             "command_vel": [],
-            "bms_power": []
+            "bms_power": [],
+            "rpy": []
         }
         
         with open(self.file_path, 'r') as f:
@@ -153,12 +155,32 @@ class CsvLogLoader:
                         float(row['base_lin_vel_1']), 
                         float(row['base_lin_vel_2'])
                     ])
+
+                    # Base Angular Velocity [wx, wy, wz]
+                    if 'base_ang_vel_0' in row:
+                        data["base_ang_vel"].append([
+                            float(row['base_ang_vel_0']), 
+                            float(row['base_ang_vel_1']), 
+                            float(row['base_ang_vel_2'])
+                        ])
+                    else:
+                        data["base_ang_vel"].append([0.0, 0.0, 0.0])
                     
                     # Joint States (12 DOF)
                     data["dof_pos"].append([float(row[f'dof_pos_{i}']) for i in range(12)])
                     data["dof_vel"].append([float(row[f'dof_vel_{i}']) for i in range(12)])
                     data["dof_torque"].append([float(row[f'dof_torque_{i}']) for i in range(12)])
                     
+                    # RPY
+                    if 'rpy_roll' in row:
+                        data["rpy"].append([
+                            float(row['rpy_roll']),
+                            float(row['rpy_pitch']),
+                            float(row['rpy_yaw'])
+                        ])
+                    else:
+                        data["rpy"].append([0.0, 0.0, 0.0])
+
                     # BMS Power (if available)
                     if 'power' in row:
                         data["bms_power"].append(float(row['power']))
@@ -260,6 +282,114 @@ class RosBagLoader:
             
         print(f"[INFO] Loaded {len(data['timestamp'])} frames from Real Log.")
         return data
+
+
+class RealPerformanceEvaluator:
+    """Evaluates Real-world robot performance based on internal Ground Truth."""
+    
+    def __init__(self, real_data):
+        self.real = real_data
+
+    def evaluate(self):
+        print("[INFO] Evaluating Real Robot Performance...")
+        
+        # 1. Velocity Tracking (GT: cmd_vel)
+        # cmd_vel: [vx, vy, wz]
+        # base_lin_vel: [vx, vy, vz]
+        # base_ang_vel: [wx, wy, wz]
+        
+        cmd_vx = self.real["command_vel"][:, 0]
+        cmd_vy = self.real["command_vel"][:, 1]
+        cmd_wz = self.real["command_vel"][:, 2]
+        
+        real_vx = self.real["base_lin_vel"][:, 0]
+        real_vy = self.real["base_lin_vel"][:, 1]
+        
+        # Check if base_ang_vel exists and has data
+        if "base_ang_vel" in self.real and len(self.real["base_ang_vel"]) > 0:
+            real_wz = self.real["base_ang_vel"][:, 2]
+        else:
+            real_wz = np.zeros_like(cmd_wz) # Fallback if not available
+            
+        # RMSE Calculation
+        rmse_vx = np.sqrt(np.mean((cmd_vx - real_vx)**2))
+        rmse_vy = np.sqrt(np.mean((cmd_vy - real_vy)**2))
+        rmse_wz = np.sqrt(np.mean((cmd_wz - real_wz)**2))
+        
+        # 2. Stability (GT: 0.0 rad for Roll/Pitch)
+        # RPY: [roll, pitch, yaw]
+        if "rpy" in self.real and len(self.real["rpy"]) > 0:
+            roll = self.real["rpy"][:, 0]
+            pitch = self.real["rpy"][:, 1]
+            
+            roll_mean = np.mean(roll)
+            roll_std = np.std(roll)
+            pitch_mean = np.mean(pitch)
+            pitch_std = np.std(pitch)
+        else:
+            roll_mean, roll_std = 0.0, 0.0
+            pitch_mean, pitch_std = 0.0, 0.0
+            
+        # 3. Energy (Baseline: 53.8 W)
+        BASELINE_POWER = 53.8
+        
+        if "bms_power" in self.real and len(self.real["bms_power"]) > 0:
+            power = self.real["bms_power"]
+            avg_power = np.mean(power)
+            std_power = np.std(power)
+            cot_ratio = avg_power / BASELINE_POWER if BASELINE_POWER > 0 else 0.0
+        else:
+            avg_power, std_power, cot_ratio = 0.0, 0.0, 0.0
+            
+        # 4. Smoothness (Jitter)
+        # We define Jitter as the mean absolute change in torque between time steps.
+        # Lower is smoother.
+        if "dof_torque" in self.real and len(self.real["dof_torque"]) > 0:
+            # Calculate diff along time axis (axis 0)
+            torque_diff = np.diff(self.real["dof_torque"], axis=0)
+            # Mean of absolute differences across all joints and time steps
+            torque_jitter = np.mean(np.abs(torque_diff))
+        else:
+            torque_jitter = 0.0
+
+        return {
+            "rmse_vx": rmse_vx,
+            "rmse_vy": rmse_vy,
+            "rmse_wz": rmse_wz,
+            "roll_mean": roll_mean,
+            "roll_std": roll_std,
+            "pitch_mean": pitch_mean,
+            "pitch_std": pitch_std,
+            "avg_power": avg_power,
+            "std_power": std_power,
+            "power_ratio": cot_ratio,
+            "torque_jitter": torque_jitter
+        }
+
+    def generate_report(self, metrics):
+        print("\n" + "="*50)
+        print("REAL ROBOT PERFORMANCE REPORT (Internal GT)")
+        print("="*50)
+        
+        print("1. Velocity Tracking (GT: Time-variant cmd_vel)")
+        print(f"   Vx RMSE: {metrics['rmse_vx']:.4f} m/s")
+        print(f"   Vy RMSE: {metrics['rmse_vy']:.4f} m/s")
+        print(f"   Wz RMSE: {metrics['rmse_wz']:.4f} rad/s")
+        
+        print("\n2. Stability (GT: 0.0 rad)")
+        print(f"   Roll  - Mean (Bias): {metrics['roll_mean']:.4f}, Std: {metrics['roll_std']:.4f}")
+        print(f"   Pitch - Mean (Bias): {metrics['pitch_mean']:.4f}, Std: {metrics['pitch_std']:.4f}")
+        if abs(metrics['pitch_mean']) > 0.03:
+            print(f"   [WARN] Pitch bias > 0.03 rad detected. Calibration recommended.")
+            
+        print("\n3. Energy Efficiency (Baseline: 53.8 W)")
+        print(f"   Avg Power: {metrics['avg_power']:.2f} W (+/- {metrics['std_power']:.2f})")
+        print(f"   Ratio to Baseline: {metrics['power_ratio']:.2f}x")
+        
+        print("\n4. Control Smoothness (Jitter)")
+        print(f"   Torque Jitter: {metrics['torque_jitter']:.4f} Nm/step")
+        print(f"   (Lower is better. High values indicate vibration/noise)")
+        print("="*50 + "\n")
 
 
 class SimToRealEvaluator:
@@ -485,7 +615,12 @@ def main():
         print(f"[ERROR] Failed to load Real data: {e}")
         return
 
-    # 3. Evaluate
+    # 3. Evaluate Real Performance (Internal GT)
+    real_evaluator = RealPerformanceEvaluator(real_data)
+    real_metrics = real_evaluator.evaluate()
+    real_evaluator.generate_report(real_metrics)
+
+    # 4. Evaluate Sim-to-Real Gap
     evaluator = SimToRealEvaluator(sim_data, real_data)
     evaluator.align_data()
     metrics = evaluator.calculate_gaps()

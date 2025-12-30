@@ -162,7 +162,7 @@ isaaclab.bat -p -m tensorboard.main --logdir=logs
 ``` 
 ```bash
 isaaclab.bat -p scripts/evaluation/sim_eval.py --num_envs 1 --evaluation_time 5.0
-isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file < PATH_TO_PKL > --real_bag < PATH_TO_MCAP >
+isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file scripts\evaluation\result\csv\sim_log_unitree_go2_rough_2025-12-26_14-04-27.csv --real_log scripts\evaluation\go2_logger\logs\real_log_2025-12-29.csv
 ```
 ---
 ---
