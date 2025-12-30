@@ -72,9 +72,25 @@ def main():
     run_command(cmd_real, "Real Log Analysis")
 
     # ------------------------------------------------------------------
-    # Step 2: Sim-to-Real Comparison (기존 Sim 로그와 비교)
+    # Step 2: Simulation Log Evaluation
     # ------------------------------------------------------------------
-    print_step("2. Sim-to-Real Comparison")
+    print_step("2. Simulation Data Evaluation")
+    sim_eval_script = os.path.join(base_dir, "sim_eval.py")
+    
+    if os.path.exists(sim_eval_script):
+        # 파이프라인에서 직접 계산하지 않고, sim_eval.py의 기능을 호출함
+        cmd_sim_analyze = [
+            sys.executable, sim_eval_script,
+            "--analyze_log", sim_log_path  # 새로 추가된 옵션 사용
+        ]
+        run_command(cmd_sim_analyze, "Sim Log Static Analysis")
+    else:
+        print(f"{Colors.FAIL}sim_eval.py missing.{Colors.ENDC}")
+    
+    # ------------------------------------------------------------------
+    # Step 3: Sim-to-Real Comparison (기존 Sim 로그와 비교)
+    # ------------------------------------------------------------------
+    print_step("3. Sim-to-Real Comparison")
     sim2real_script = os.path.join(base_dir, "sim2real_eval.py")
     
     if not os.path.exists(sim2real_script):

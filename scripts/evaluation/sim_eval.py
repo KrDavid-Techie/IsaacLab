@@ -10,10 +10,12 @@
 import argparse
 import sys
 import os
+import pickle
+import pandas as pd
+import numpy as np
 
 # Set KMP_DUPLICATE_LIB_OK to TRUE to avoid OpenMP errors
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 
 from isaaclab.app import AppLauncher
 
@@ -49,6 +51,80 @@ parser.add_argument("--minio_access_key", type=str, default=None, help="MinIO ac
 parser.add_argument("--minio_secret_key", type=str, default=None, help="MinIO secret key")
 parser.add_argument("--minio_bucket", type=str, default=None, help="MinIO bucket name")
 
+# Analyze existing log without running simulation
+parser.add_argument("--analyze_log", type=str, default=None, help="Analyze existing log file without running simulation.")
+
+args_cli, hydra_args = parser.parse_known_args()
+
+if args_cli.analyze_log is not None:
+    def analyze_existing_log(file_path):
+        """
+        Isaac Sim을 실행하지 않고 기존 로그 파일만 분석하여 통계를 출력합니다.
+        """
+        print(f"\n[INFO] 📊 Starting Static Analysis: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"[ERROR] File not found: {file_path}")
+            return
+
+        data = {}
+        try:
+            if file_path.endswith('.csv'):
+                df = pd.read_csv(file_path)
+                for col in df.columns:
+                    data[col] = df[col].to_numpy()
+            elif file_path.endswith('.pkl'):
+                with open(file_path, 'rb') as f:
+                    data = pickle.load(f)
+            else:
+                print("[ERROR] Unsupported file format. Use .csv or .pkl")
+                return
+
+            # Metrics Calculation
+            if 'cmd_vel_0' in data and 'base_lin_vel_0' in data: # CSV style
+                cmd_vx = data['cmd_vel_0']
+                meas_vx = data['base_lin_vel_0']
+                cmd_wz = data['cmd_vel_2']
+                meas_wz = data['base_ang_vel_2'] if 'base_ang_vel_2' in data else np.zeros_like(cmd_vx)
+            elif 'command_lin_vel' in data and 'base_lin_vel' in data: # PKL style
+                cmd_vx = data['command_lin_vel'][:, 0]
+                meas_vx = data['base_lin_vel'][:, 0]
+                cmd_wz = data['command_ang_vel'][:, 2]
+                meas_wz = data['base_ang_vel'][:, 2]
+            else:
+                print("[WARN] Velocity columns not found. Skipping metrics.")
+                cmd_vx, meas_vx = np.zeros(1), np.zeros(1)
+                cmd_wz, meas_wz = np.zeros(1), np.zeros(1)
+
+            vx_rmse = np.sqrt(np.mean((cmd_vx - meas_vx)**2))
+            wz_rmse = np.sqrt(np.mean((cmd_wz - meas_wz)**2))
+
+            # Torque
+            torque_keys = [k for k in data.keys() if 'dof_torque' in k]
+            if torque_keys:
+                all_torques = np.stack([data[k] for k in torque_keys], axis=1)
+                avg_torque = np.mean(np.abs(all_torques))
+            elif 'dof_torque' in data:
+                avg_torque = np.mean(np.abs(data['dof_torque']))
+            else:
+                avg_torque = 0.0
+
+            print("-" * 50)
+            print(f"📄 Log Analysis Result")
+            print("-" * 50)
+            print(f"1. Velocity Tracking RMSE")
+            print(f"   - Linear X : {vx_rmse:.4f} m/s")
+            print(f"   - Angular Z: {wz_rmse:.4f} rad/s")
+            print(f"2. Efficiency")
+            print(f"   - Avg Torque: {avg_torque:.4f} Nm")
+            print("-" * 50 + "\n")
+
+        except Exception as e:
+            print(f"[ERROR] During analysis: {e}")
+
+    analyze_existing_log(args_cli.analyze_log)
+    sys.exit(0)
+
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -56,7 +132,6 @@ AppLauncher.add_app_launcher_args(parser)
 # Set headless to True by default
 parser.set_defaults(headless=True)
 # parse the arguments
-args_cli, hydra_args = parser.parse_known_args()
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
