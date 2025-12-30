@@ -37,6 +37,17 @@ The evaluation process consists of three main steps:
 
 ## 📂 Components / 구성 요소
 
+### 0. End to End Pipeline(`eval_pipeline.py`)
+*   **Description**: 
+*   **설명**: real_eval -> cost
+*   **Usage / 사용법**:
+    ```bash
+    # Using CSV files (Recommended)
+    isaaclab.bat -p scripts\evaluation\eval_pipeline.py --sim_log scripts\evaluation\result\csv\sim_log_unitree_go2_rough_2025-12-26_14-04-27.csv --real_log scripts\evaluation\go2_logger\logs\real_log_2025-12-29.csv
+    ```
+*   **Output**:
+    *   `sim2real_reports\sim2real_report_YYYY-MM-DD.csv`
+
 ### 1. Real-world Logger (`go2_logger`)
 *   **Path**: `scripts/evaluation/go2_logger/`
 *   **Description**: A ROS2 node that subscribes to Unitree Go2 topics (`/sport/modestate`, `/lowstate`, `/wireless_remote`) and records them.
@@ -71,10 +82,10 @@ The evaluation process consists of three main steps:
 *   **Usage / 사용법**:
     ```bash
     # Using CSV files (Recommended)
-    ./isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file scripts/evaluation/result/csv/sim_log_....csv --real_log scripts/evaluation/go2_logger/logs/real_log_....csv
+    isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file scripts/evaluation/result/csv/sim_log_....csv --real_log scripts/evaluation/go2_logger/logs/real_log_....csv
     
     # Using Legacy formats (PKL + MCAP)
-    ./isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file path/to/sim_log.pkl --real_log path/to/real_log.mcap
+    isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file path/to/sim_log.pkl --real_log path/to/real_log.mcap
     ```
 *   **Output**: `scripts/evaluation/result/sim2real_report_{YYYY-MM-DD}.csv`
 
