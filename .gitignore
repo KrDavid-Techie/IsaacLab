@@ -76,7 +76,6 @@ tests/
 ./legged-loco
 
 # Evaluation
-scripts/evaluation/result
 **/*.txt
 **/*.out
 **/*.csv
@@ -86,3 +85,5 @@ scripts/evaluation/result
 scripts/evaluation/go2_rl_deploy
 scripts/evaluation/go2_logger
 scripts/evaluation/logs
+scripts/evaluation/result
+scripts/evaluation/sim2real_reports
