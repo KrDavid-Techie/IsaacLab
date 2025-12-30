@@ -234,7 +234,7 @@ class SimToRealEvaluator:
             "real_torque_smoothness": real_smoothness
         }
 
-    def generate_report(self, metrics, output_dir="scripts/evaluation/result"):
+    def generate_report(self, metrics, output_dir="scripts\\evaluation\\sim2real_reports"):
         os.makedirs(output_dir, exist_ok=True)
         
         # Ground Truths
@@ -273,7 +273,7 @@ class SimToRealEvaluator:
             return round(float(val), 5) if isinstance(val, (int, float, np.float32, np.float64)) else val
 
         csv_data = {
-            "Date": datetime.now().strftime('%Y-%m-%d'),
+            "Date": datetime.now().strftime('%H : %M : %S'),
             "Velocity_Tracking_Gap_RMSE": fmt(metrics['velocity_gap_rmse']),
             "Torque_Reality_Gap_RMSE": fmt(metrics['torque_gap_rmse']),
             "Sim_CoT": fmt(metrics['sim_cot']),
