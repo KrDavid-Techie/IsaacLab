@@ -25,16 +25,16 @@ parser.add_argument(
     "--task", type=str, default=None, help="Name of the task."
 )
 parser.add_argument(
-    "--run_phase2", type=str, required=True, help="Name of the Adaptation Module run (Phase 2)."
+    "--run_phase2", type=str, default=None, help="Name of the Adaptation Module run (Phase 2)."
 )
 parser.add_argument(
-    "--ckpt_phase2", type=str, default="adaptation_module.pt", help="Checkpoint file for Adaptation Module."
+    "--ckpt_phase2", type=str, default="adaptation_module.pt", help="Checkpoint file for Adaptation Module. Can be a full path."
 )
 parser.add_argument(
     "--run_phase1", type=str, default=None, help="Name of the Teacher Policy run (Phase 1). Optional if teacher_policy_info.txt exists."
 )
 parser.add_argument(
-    "--ckpt_phase1", type=str, default=None, help="Checkpoint file for Teacher Policy. Optional if teacher_policy_info.txt exists."
+    "--ckpt_phase1", type=str, default=None, help="Checkpoint file for Teacher Policy. Can be a full path. Optional if teacher_policy_info.txt exists."
 )
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
@@ -92,18 +92,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     # ---------------------------------------------------------
     # 0. Locate Phase 2 Run and Metadata
     # ---------------------------------------------------------
-    log_root_p2 = get_log_root(args_cli.run_phase2, folder_name="rma")
-    
-    # Try to find the run folder
-    run_path_p2 = os.path.join(log_root_p2, args_cli.run_phase2)
-    # If it's a date folder inside
-    if os.path.exists(run_path_p2):
-        # Check if there are date folders or if it's direct
-        subdirs = [d for d in os.listdir(run_path_p2) if os.path.isdir(os.path.join(run_path_p2, d))]
-        subdirs.sort()
-        if subdirs:
-            # Use latest date folder
-            run_path_p2 = os.path.join(run_path_p2, subdirs[-1])
+    run_path_p2 = None
+    adapt_ckpt_path = None
+
+    if args_cli.ckpt_phase2 and os.path.isfile(args_cli.ckpt_phase2):
+        adapt_ckpt_path = args_cli.ckpt_phase2
+        run_path_p2 = os.path.dirname(args_cli.ckpt_phase2)
+        print(f"[INFO] Using direct path for Phase 2: {run_path_p2}")
+    elif args_cli.run_phase2:
+        log_root_p2 = get_log_root(args_cli.run_phase2, folder_name="rma")
+        
+        # Try to find the run folder
+        run_path_p2 = os.path.join(log_root_p2, args_cli.run_phase2)
+        # If it's a date folder inside
+        if os.path.exists(run_path_p2):
+            # Check if there are date folders or if it's direct
+            subdirs = [d for d in os.listdir(run_path_p2) if os.path.isdir(os.path.join(run_path_p2, d))]
+            subdirs.sort()
+            if subdirs:
+                # Use latest date folder
+                run_path_p2 = os.path.join(run_path_p2, subdirs[-1])
+        
+        adapt_ckpt_path = os.path.join(run_path_p2, args_cli.ckpt_phase2)
+    else:
+        raise ValueError("Must provide --run_phase2 or a valid file path in --ckpt_phase2.")
             
     print(f"[INFO] Phase 2 Run Directory: {run_path_p2}")
 
@@ -129,27 +141,32 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     # ---------------------------------------------------------
     resume_path_p1 = None
     
-    # Try to read from info file
-    info_file = os.path.join(run_path_p2, "teacher_policy_info.txt")
-    if os.path.exists(info_file):
-        with open(info_file, "r") as f:
-            lines = f.readlines()
-            for i, line in enumerate(lines):
-                if line.strip().startswith("Teacher Policy Path:"):
-                    # Try same line first
-                    parts = line.split(":", 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        resume_path_p1 = parts[1].strip()
-                    # Try next line if same line is empty
-                    elif i + 1 < len(lines):
-                        resume_path_p1 = lines[i+1].strip()
-                    
-                    if resume_path_p1:
-                        print(f"[INFO] Found Teacher Policy path in info file: {resume_path_p1}")
-                        break
+    # Check direct path first
+    if args_cli.ckpt_phase1 and os.path.isfile(args_cli.ckpt_phase1):
+        resume_path_p1 = args_cli.ckpt_phase1
     
-    # Override if arguments provided
-    if args_cli.run_phase1:
+    # Try to read from info file
+    if not resume_path_p1 and run_path_p2:
+        info_file = os.path.join(run_path_p2, "teacher_policy_info.txt")
+        if os.path.exists(info_file):
+            with open(info_file, "r") as f:
+                lines = f.readlines()
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("Teacher Policy Path:"):
+                        # Try same line first
+                        parts = line.split(":", 1)
+                        if len(parts) > 1 and parts[1].strip():
+                            resume_path_p1 = parts[1].strip()
+                        # Try next line if same line is empty
+                        elif i + 1 < len(lines):
+                            resume_path_p1 = lines[i+1].strip()
+                        
+                        if resume_path_p1:
+                            print(f"[INFO] Found Teacher Policy path in info file: {resume_path_p1}")
+                            break
+    
+    # Override if arguments provided (run name)
+    if not resume_path_p1 and args_cli.run_phase1:
         log_root_p1 = get_log_root(args_cli.run_phase1)
         ckpt = args_cli.ckpt_phase1 if args_cli.ckpt_phase1 else "model_.*.pt"
         resume_path_p1 = get_checkpoint_path(
@@ -159,7 +176,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
         )
         
     if not resume_path_p1:
-        raise ValueError("Could not determine Teacher Policy path. Please provide --run_phase1 or ensure teacher_policy_info.txt exists in Phase 2 run.")
+        raise ValueError("Could not determine Teacher Policy path. Provide --ckpt_phase1 (path) or --run_phase1.")
 
     print(f"[INFO]: Loading Teacher Policy from: {resume_path_p1}")
 
@@ -187,9 +204,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     # ---------------------------------------------------------
     # 2. Load Adaptation Module (Phase 2)
     # ---------------------------------------------------------
-    # We already located `run_path_p2` in step 0
+    # We already located `adapt_ckpt_path` in step 0
     
-    adapt_ckpt_path = os.path.join(run_path_p2, args_cli.ckpt_phase2)
     print(f"[INFO]: Loading Adaptation Module from: {adapt_ckpt_path}")
     
     # Recreate model architecture

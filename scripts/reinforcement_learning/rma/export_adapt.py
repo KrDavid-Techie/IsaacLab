@@ -124,65 +124,87 @@ def build_mlp_from_weights(state_dict, prefix="actor."):
 
 def main():
     parser = argparse.ArgumentParser(description="Export RMA Student Policy to ONNX.")
-    parser.add_argument("--run_phase2", type=str, required=True, help="Name of the Adaptation Module run (Phase 2).")
-    parser.add_argument("--ckpt_phase2", type=str, default="adaptation_module.pt", help="Checkpoint file for Adaptation Module.")
+    parser.add_argument("--run_phase2", type=str, default=None, help="Name of the Adaptation Module run (Phase 2).")
+    parser.add_argument("--ckpt_phase2", type=str, default="adaptation_module.pt", help="Checkpoint file for Adaptation Module. Can be a full path.")
     parser.add_argument("--run_phase1", type=str, default=None, help="Name of the Teacher Policy run (Phase 1).")
-    parser.add_argument("--ckpt_phase1", type=str, default=None, help="Checkpoint file for Teacher Policy.")
+    parser.add_argument("--ckpt_phase1", type=str, default=None, help="Checkpoint file for Teacher Policy. Can be a full path.")
     parser.add_argument("--out_dir", type=str, default="exported_models", help="Directory to save the exported model.")
     parser.add_argument("--filename", type=str, default="rma_policy.onnx", help="Name of the exported ONNX file.")
+    parser.add_argument("--export_teacher", action="store_true", default=False, help="Export only the Teacher Policy (Phase 1).")
     args = parser.parse_args()
 
     # ---------------------------------------------------------
-    # 0. Locate Phase 2 Run
+    # 0. Locate Phase 2 Run (if needed)
     # ---------------------------------------------------------
-    log_root_p2 = get_log_root(args.run_phase2, folder_name="rma")
-    run_path_p2 = os.path.join(log_root_p2, args.run_phase2)
+    run_path_p2 = None
     
-    # If direct path doesn't exist, try searching one level deep (e.g. logs/rma/<experiment>/<timestamp>)
-    if not os.path.exists(run_path_p2) and os.path.exists(log_root_p2):
-        for subdir in os.listdir(log_root_p2):
-            candidate = os.path.join(log_root_p2, subdir, args.run_phase2)
-            if os.path.isdir(candidate):
-                run_path_p2 = candidate
-                break
-
-    if os.path.exists(run_path_p2):
-        # Check if this is an experiment folder (contains subdirs) or a run folder
-        # We assume a run folder has the checkpoint or info file, or no subdirs that look like timestamps
-        has_ckpt = os.path.exists(os.path.join(run_path_p2, args.ckpt_phase2))
-        has_info = os.path.exists(os.path.join(run_path_p2, "teacher_policy_info.txt"))
-        
-        if not (has_ckpt or has_info):
-            subdirs = [d for d in os.listdir(run_path_p2) if os.path.isdir(os.path.join(run_path_p2, d))]
-            subdirs.sort()
-            if subdirs:
-                run_path_p2 = os.path.join(run_path_p2, subdirs[-1])
+    if not args.export_teacher:
+        if args.ckpt_phase2 and os.path.isfile(args.ckpt_phase2):
+            run_path_p2 = os.path.dirname(args.ckpt_phase2)
+            print(f"[INFO] Using direct path for Phase 2: {run_path_p2}")
+        elif args.run_phase2:
+            log_root_p2 = get_log_root(args.run_phase2, folder_name="rma")
+            run_path_p2 = os.path.join(log_root_p2, args.run_phase2)
             
-    print(f"[INFO] Phase 2 Run Directory: {run_path_p2}")
+            # If direct path doesn't exist, try searching one level deep (e.g. logs/rma/<experiment>/<timestamp>)
+            if not os.path.exists(run_path_p2) and os.path.exists(log_root_p2):
+                for subdir in os.listdir(log_root_p2):
+                    candidate = os.path.join(log_root_p2, subdir, args.run_phase2)
+                    if os.path.isdir(candidate):
+                        run_path_p2 = candidate
+                        break
+
+            if os.path.exists(run_path_p2):
+                # Check if this is an experiment folder (contains subdirs) or a run folder
+                # We assume a run folder has the checkpoint or info file, or no subdirs that look like timestamps
+                has_ckpt = os.path.exists(os.path.join(run_path_p2, args.ckpt_phase2))
+                has_info = os.path.exists(os.path.join(run_path_p2, "teacher_policy_info.txt"))
+                
+                if not (has_ckpt or has_info):
+                    subdirs = [d for d in os.listdir(run_path_p2) if os.path.isdir(os.path.join(run_path_p2, d))]
+                    subdirs.sort()
+                    if subdirs:
+                        run_path_p2 = os.path.join(run_path_p2, subdirs[-1])
+        else:
+            raise ValueError("Must provide --run_phase2 or a valid file path in --ckpt_phase2.")
+            
+        print(f"[INFO] Phase 2 Run Directory: {run_path_p2}")
 
     # ---------------------------------------------------------
     # 1. Load Teacher Policy (Phase 1)
     # ---------------------------------------------------------
     resume_path_p1 = None
     
-    # Try to read from info file
-    info_file = os.path.join(run_path_p2, "teacher_policy_info.txt")
-    if os.path.exists(info_file):
-        with open(info_file, "r") as f:
-            lines = f.readlines()
-            for i, line in enumerate(lines):
-                if line.strip().startswith("Teacher Policy Path:"):
-                    parts = line.split(":", 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        resume_path_p1 = parts[1].strip()
-                    elif i + 1 < len(lines):
-                        resume_path_p1 = lines[i+1].strip()
-                    
-                    if resume_path_p1:
-                        print(f"[INFO] Found Teacher Policy path in info file: {resume_path_p1}")
-                        break
+    # Check if direct path provided
+    if args.ckpt_phase1:
+        # Check if it is a file
+        if os.path.isfile(args.ckpt_phase1):
+            resume_path_p1 = args.ckpt_phase1
+        elif not args.run_phase1:
+            # If run_phase1 is NOT provided, then ckpt_phase1 MUST be a valid path.
+            # If it's not a file, we should raise an error here to be helpful.
+            raise FileNotFoundError(f"Provided checkpoint file does not exist: {args.ckpt_phase1}")
     
-    if args.run_phase1:
+    # Try to read from info file if not provided directly and we have Phase 2 run path
+    if not resume_path_p1 and run_path_p2:
+        info_file = os.path.join(run_path_p2, "teacher_policy_info.txt")
+        if os.path.exists(info_file):
+            with open(info_file, "r") as f:
+                lines = f.readlines()
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("Teacher Policy Path:"):
+                        parts = line.split(":", 1)
+                        if len(parts) > 1 and parts[1].strip():
+                            resume_path_p1 = parts[1].strip()
+                        elif i + 1 < len(lines):
+                            resume_path_p1 = lines[i+1].strip()
+                        
+                        if resume_path_p1:
+                            print(f"[INFO] Found Teacher Policy path in info file: {resume_path_p1}")
+                            break
+    
+    # Try to find from run name
+    if not resume_path_p1 and args.run_phase1:
         log_root_p1 = get_log_root(args.run_phase1)
         ckpt = args.ckpt_phase1 if args.ckpt_phase1 else "model_.*.pt"
         resume_path_p1 = get_checkpoint_path(
@@ -192,7 +214,7 @@ def main():
         )
         
     if not resume_path_p1:
-        raise ValueError("Could not determine Teacher Policy path.")
+        raise ValueError("Could not determine Teacher Policy path. Provide --ckpt_phase1 (path) or --run_phase1.")
 
     print(f"[INFO]: Loading Teacher Policy from: {resume_path_p1}")
     
@@ -221,9 +243,69 @@ def main():
         print("[WARNING] No observation normalizer found. Using Identity.")
 
     # ---------------------------------------------------------
-    # 2. Load Adaptation Module (Phase 2)
+    # 2. Export Teacher Only (if requested)
     # ---------------------------------------------------------
-    adapt_ckpt_path = os.path.join(run_path_p2, args.ckpt_phase2)
+    if args.export_teacher:
+        print("[INFO] Exporting Teacher Policy Only...")
+        
+        # Create Export Module (Teacher + Normalizer)
+        class TeacherExportModule(nn.Module):
+            def __init__(self, actor, normalizer=None):
+                super().__init__()
+                self.actor = actor
+                self.normalizer = normalizer if normalizer else nn.Identity()
+                
+            def forward(self, obs):
+                return self.actor(self.normalizer(obs))
+                
+        export_module = TeacherExportModule(teacher_actor, normalizer)
+        export_module.eval()
+        
+        # Infer input dim
+        input_dim = teacher_actor[0].in_features
+        print(f"[INFO] Inferred Input Dim: {input_dim}")
+        
+        dummy_input = torch.zeros(1, input_dim)
+        
+        # Output directory
+        out_dir = args.out_dir
+        if run_path_p2:
+             out_dir = os.path.join(run_path_p2, args.out_dir)
+        else:
+             # If no phase 2 run, save in phase 1 run dir or current dir
+             p1_dir = os.path.dirname(resume_path_p1)
+             out_dir = os.path.join(p1_dir, args.out_dir)
+             
+        os.makedirs(out_dir, exist_ok=True)
+        onnx_path = os.path.join(out_dir, "teacher_policy.onnx")
+        
+        print(f"[INFO] Exporting to: {onnx_path}")
+        
+        torch.onnx.export(
+            export_module,
+            (dummy_input,),
+            onnx_path,
+            export_params=True,
+            opset_version=18,
+            verbose=False,
+            input_names=["obs"],
+            output_names=["actions"],
+            dynamic_axes={
+                "obs": {0: "batch_size"},
+                "actions": {0: "batch_size"},
+            }
+        )
+        print("[INFO] Teacher Export Complete!")
+        return
+
+    # ---------------------------------------------------------
+    # 3. Load Adaptation Module (Phase 2)
+    # ---------------------------------------------------------
+    if args.ckpt_phase2 and os.path.isfile(args.ckpt_phase2):
+        adapt_ckpt_path = args.ckpt_phase2
+    else:
+        adapt_ckpt_path = os.path.join(run_path_p2, args.ckpt_phase2)
+        
     print(f"[INFO]: Loading Adaptation Module from: {adapt_ckpt_path}")
     
     adapt_state_dict = torch.load(adapt_ckpt_path, map_location="cpu")

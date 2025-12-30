@@ -407,7 +407,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         pickle.dump(metrics, f)
         
     # Save to CSV (Summary)
-    csv_filename = f"evaluation_results_{agent_cfg.experiment_name}.csv"
+    csv_filename = f"simulation_eval_{agent_cfg.experiment_name}.csv"
     csv_path = os.path.join(eval_output_dir, csv_filename)
     file_exists = os.path.isfile(csv_path)
     

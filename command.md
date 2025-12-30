@@ -137,11 +137,14 @@ isaaclab.bat -p scripts/reinforcement_learning/rma/train_adapt.py --task Isaac-V
 ```
 3. Run Play
 ```bash 
-isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --num_envs 64 --run_phase2 unitree_go2_rough_rma_phase2 --video --video_length 1000
+isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Rough-Unitree-Go2-RMA-v0 --num_envs 64 --run_phase2 unitree_go2_rough_rma_phase2
 
 isaaclab.bat -p scripts/reinforcement_learning/rma/play_adapt.py --task Isaac-Velocity-Ship-Unitree-Go2-RMA-v0 --num_envs 64 --run_phase2 unitree_go2_ship_rma_phase2 --video --video_length 1000
 ```
 4. Export to Onnx
+```bash
+isaaclab.bat -p scripts/reinforcement_learning/rma/export_adapt.py --ckpt_phase1 C:\Users\User\github\IsaacLab\logs\rma\unitree_go2_rough_rma_phase1\2025-12-17_16-43-53\model_1499.pt
+```
 ```bash
 isaaclab.bat -p scripts/reinforcement_learning/rma/export_adapt.py --run_phase2 2025-12-18_08-15-38
 ```
