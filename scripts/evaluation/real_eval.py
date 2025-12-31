@@ -27,9 +27,26 @@ class RobustVelocityEstimator:
         # 데이터 추출
         dof_vel = data["dof_vel"]
         dof_pos = data["dof_pos"]
-        foot_force = data["foot_force"]
-        acc_local = np.array([data[f"base_acc_{i}"] for i in range(3)]).T if "base_acc_0" in data else np.zeros((len(dof_vel), 3))
-        quat = np.array([data[f"base_quat_{i}"] for i in range(4)]).T if "base_quat_0" in data else np.array([[1,0,0,0]]*len(dof_vel))
+        
+        # Robust key access
+        if "foot_force" in data:
+            foot_force = data["foot_force"]
+        else:
+            foot_force = np.zeros((len(dof_vel), 4))
+
+        if "base_acc" in data:
+            acc_local = data["base_acc"]
+        elif "base_acc_0" in data:
+            acc_local = np.array([data[f"base_acc_{i}"] for i in range(3)]).T
+        else:
+            acc_local = np.zeros((len(dof_vel), 3))
+            
+        if "base_quat" in data:
+            quat = data["base_quat"]
+        elif "base_quat_0" in data:
+            quat = np.array([data[f"base_quat_{i}"] for i in range(4)]).T
+        else:
+            quat = np.array([[1,0,0,0]]*len(dof_vel))
         
         # 기구학 파라미터 (Go2)
         L2, L3 = 0.213, 0.213 
@@ -95,7 +112,10 @@ class CsvLogLoader:
             "dof_torque": [],
             "command_vel": [],
             "bms_power": [],
-            "rpy": []
+            "rpy": [],
+            "foot_force": [],
+            "base_acc": [],
+            "base_quat": []
         }
         
         with open(self.file_path, 'r') as f:
@@ -143,6 +163,28 @@ class CsvLogLoader:
                         ])
                     else:
                         data["rpy"].append([0.0, 0.0, 0.0])
+
+                    # Foot Force
+                    if 'foot_force_0' in row:
+                        data["foot_force"].append([float(row[f'foot_force_{i}']) for i in range(4)])
+                    else:
+                        data["foot_force"].append([0.0]*4)
+
+                    # IMU Acc
+                    if 'imu_acc_0' in row:
+                        data["base_acc"].append([float(row[f'imu_acc_{i}']) for i in range(3)])
+                    elif 'base_acc_0' in row:
+                        data["base_acc"].append([float(row[f'base_acc_{i}']) for i in range(3)])
+                    else:
+                        data["base_acc"].append([0.0]*3)
+
+                    # IMU Quat
+                    if 'imu_quat_0' in row:
+                        data["base_quat"].append([float(row[f'imu_quat_{i}']) for i in range(4)])
+                    elif 'base_quat_0' in row:
+                        data["base_quat"].append([float(row[f'base_quat_{i}']) for i in range(4)])
+                    else:
+                        data["base_quat"].append([1.0, 0.0, 0.0, 0.0])
 
                     # BMS Power (if available)
                     if 'power' in row:

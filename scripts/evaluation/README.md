@@ -39,8 +39,8 @@ The evaluation process consists of three main steps:
 
 ### 0. End to End Pipeline(`eval_pipeline.py`)
 *   **Path**: `scripts/evaluation/eval_pipeline.py`
-*   **Description**: 
-*   **설명**: real_eval -> cost
+*   **Description**: An orchestration script that automates the analysis workflow. It sequentially executes real-world data evaluation (real_eval), simulation data evaluation (sim_eval), and Sim-to-Real comparison (sim2real_eval) using provided log files.
+*   **설명**: 실제 로봇 주행 로그와 기존 시뮬레이션 로그를 입력받아, real_eval(실환경 데이터 분석), sim_eval(시뮬레이션 데이터 분석), sim2real_eval(Sim2Real 비교) 과정을 순차적으로 자동 실행하는 통합 파이프라인입니다.
 *   **Usage / 사용법**:
     ```bash
     # Using CSV files (Recommended)
@@ -62,7 +62,19 @@ The evaluation process consists of three main steps:
     *   `logs/real_log_{YYYY-MM-DD}.csv`: Daily appended log (CSV).
     *   `logs/real_log_{HHMMSS}/`: ROS2 MCAP bag file.
 
-### 2. Simulation Evaluator (`sim_eval.py`)
+### 2. Real-world Evaluator (`real_eval.py`)
+*   **Path**: `scripts/evaluation/real_eval.py`
+*   **Description**: Analyzes real-world robot logs to evaluate performance metrics (Velocity Tracking, Stability, Energy) based on internal ground truth.
+*   **설명**: 실제 로봇 주행 로그(.csv, .mcap)를 분석하여 속도 추종성, 주행 안정성, 에너지 효율성 등의 성능 지표를 평가합니다. (시뮬레이션 비교 없음)
+*   **Usage / 사용법**:
+    ```bash
+    isaaclab.bat -p scripts/evaluation/real_eval.py --real_log scripts/evaluation/go2_logger/logs/real_log_2025-12-29.csv
+    ```
+*   **Output**:
+<img src="docs\real_eval.png"> 
+    *   Console Output: Performance Report (Velocity RMSE, Roll/Pitch Bias, CoT, Jitter).
+
+### 3. Simulation Evaluator (`sim_eval.py`)
 *   **Description**: Loads a trained checkpoint, runs the simulation (headless by default), and saves detailed logs.
 *   **설명**: 학습된 체크포인트를 로드하여 시뮬레이션을 실행(기본값: Headless)하고 상세 로그를 저장합니다.
 *   **Usage / 사용법**:
@@ -74,10 +86,11 @@ The evaluation process consists of three main steps:
     *   `--headless`: Run without GUI (Default: True).
     *   `--evaluation_time`: Duration of the run in seconds.
 *   **Output**:
+<img src="docs\sim_eval.png"> 
     *   `scripts/evaluation/result/csv/sim_log_{timestamp}.csv`
     *   `scripts/evaluation/result/pkl/sim_log_{timestamp}.pkl`
 
-### 3. Sim-to-Real Comparator (`sim2real_eval.py`)
+### 4. Sim-to-Real Comparator (`sim2real_eval.py`)
 *   **Description**: Aligns timestamps between Sim and Real data, calculates error metrics, and appends results to a daily CSV report.
 *   **설명**: 시뮬레이션과 실제 데이터의 타임스탬프를 정렬하고, 오차 지표를 계산하여 일일 CSV 리포트에 추가합니다.
 *   **Usage / 사용법**:
@@ -88,7 +101,9 @@ The evaluation process consists of three main steps:
     # Using Legacy formats (PKL + MCAP)
     isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file path/to/sim_log.pkl --real_log path/to/real_log.mcap
     ```
-*   **Output**: `scripts/evaluation/result/sim2real_report_{YYYY-MM-DD}.csv`
+*   **Output**:
+<img src="docs\sim2real_eval.png"> 
+    * `scripts/evaluation/result/sim2real_report_{YYYY-MM-DD}.csv`
 
 ---
 
