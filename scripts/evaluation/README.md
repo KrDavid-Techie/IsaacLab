@@ -38,6 +38,7 @@ The evaluation process consists of three main steps:
 ## 📂 Components / 구성 요소
 
 ### 0. End to End Pipeline(`eval_pipeline.py`)
+*   **Path**: `scripts/evaluation/eval_pipeline.py`
 *   **Description**: 
 *   **설명**: real_eval -> cost
 *   **Usage / 사용법**:

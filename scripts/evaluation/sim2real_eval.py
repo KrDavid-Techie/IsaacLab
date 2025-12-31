@@ -23,7 +23,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 from scipy.interpolate import interp1d
-from real_eval import CsvLogLoader, RosBagLoader
+from real_eval import CsvLogLoader, RosBagLoader, RobustVelocityEstimator
 
 # Import local utility
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +37,9 @@ except ImportError:
     print("[WARN] 'mcap' libraries are missing. Real-world data loading will fail.")
     print("Install via: pip install mcap mcap-ros2-support")
 
+# Constants for Unitree Go2
+ROBOT_MASS = 15.0  # kg (approx for Go2 Pro/Edu)
+GRAVITY = 9.81
 
 class MinioLogLoader:
     """Loads simulation logs from MinIO storage."""
@@ -141,20 +144,17 @@ class SimToRealEvaluator:
         f_vel = interp1d(real_t, self.real["base_lin_vel"], axis=0, kind='linear', fill_value="extrapolate")
         self.aligned["real_base_lin_vel"] = f_vel(sim_t)
         
-        # Interpolate DOF Pos/Vel
+        # Interpolate DOF Pos
         f_pos = interp1d(real_t, self.real["dof_pos"], axis=0, kind='linear', fill_value="extrapolate")
         self.aligned["real_dof_pos"] = f_pos(sim_t)
         
+        # Interpolate DOF Vel
         f_dvel = interp1d(real_t, self.real["dof_vel"], axis=0, kind='linear', fill_value="extrapolate")
         self.aligned["real_dof_vel"] = f_dvel(sim_t)
 
     def calculate_gaps(self):
         """Calculates Sim-to-Real metrics."""
         print("[INFO] Calculating Gaps...")
-        
-        # Constants for Unitree Go2
-        ROBOT_MASS = 15.0  # kg (approx for Go2 Pro/Edu)
-        GRAVITY = 9.81
         
         # 1. Velocity Tracking Gap (Sim vs Real)
         # Sim is usually the "Reference" or "Ideal", Real is "Actual"
@@ -174,7 +174,31 @@ class SimToRealEvaluator:
         
         # 3. CoT (Dimensionless)
         # CoT = Power / (Mass * Gravity * Velocity)
-        
+        # [수정] Real Robot Speed Determination
+        real_vel_vec = self.aligned["real_base_lin_vel"]
+        real_speed_norm = np.linalg.norm(real_vel_vec[:, :2], axis=1)
+        mean_real_speed = np.mean(real_speed_norm)
+        final_real_speed = real_speed_norm
+
+        if mean_real_speed > 0.01:
+            print("[INFO] Using Real High-Level Velocity for CoT.")
+        else:
+            # Fallback Logic
+            if "est_vx" in self.real:
+                 print("[INFO] Using Logged Estimate for CoT.")
+                 # Aligned 데이터에 est_vx가 없다면 원본 real 데이터에서 interpolation 해야 함
+                 # 편의상 여기서는 계산기(RobustVelocityEstimator)를 새로 돌리는게 편함
+                 pass
+            
+            print("[INFO] High-level velocity missing. Computing estimate...")
+            estimator = RobustVelocityEstimator()
+            
+            # ---> [해결책] 원본 데이터에서 추정 후, 시간축 맞춤(Resampling)
+            est_vx_raw = estimator.compute_velocity(self.real) # 원본 타임스탬프 기준
+            
+            f_est = interp1d(self.real["timestamp"], est_vx_raw, kind='linear', fill_value="extrapolate")
+            final_real_speed = np.abs(f_est(self.aligned["timestamp"])) # Sim 타임스탬프 기준
+
         # Sim Power (Mechanical)
         sim_power = np.sum(np.abs(self.sim["dof_torque"] * self.sim["dof_vel"]), axis=1)
         sim_mech_power_mean = np.mean(sim_power)
@@ -188,7 +212,7 @@ class SimToRealEvaluator:
         # Real Power (Mechanical)
         real_mech_power = np.sum(np.abs(self.aligned["real_dof_torque"] * self.aligned["real_dof_vel"]), axis=1)
         real_mech_power_mean = np.mean(real_mech_power)
-        real_vel_mean = np.mean(real_vel_norm)
+        real_vel_mean = np.mean(final_real_speed)
         
         if real_vel_mean < 0.01:
             real_cot = 0.0 # Velocity too low
