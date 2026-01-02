@@ -186,18 +186,23 @@ class SimToRealEvaluator:
             # Fallback Logic
             if "est_vx" in self.real:
                  print("[INFO] Using Logged Estimate for CoT.")
-                 # Aligned 데이터에 est_vx가 없다면 원본 real 데이터에서 interpolation 해야 함
-                 # 편의상 여기서는 계산기(RobustVelocityEstimator)를 새로 돌리는게 편함
-                 pass
+                 est_vx_raw = self.real["est_vx"]
+                 if "est_vy" in self.real:
+                     est_speed_raw = np.sqrt(est_vx_raw**2 + self.real["est_vy"]**2)
+                 else:
+                     est_speed_raw = np.abs(est_vx_raw)
+                     
+                 f_est = interp1d(self.real["timestamp"], est_speed_raw, kind='linear', fill_value="extrapolate")
+                 final_real_speed = np.abs(f_est(self.aligned["timestamp"]))
             
-            print("[INFO] High-level velocity missing. Computing estimate...")
-            estimator = RobustVelocityEstimator()
-            
-            # ---> [해결책] 원본 데이터에서 추정 후, 시간축 맞춤(Resampling)
-            est_vx_raw = estimator.compute_velocity(self.real) # 원본 타임스탬프 기준
-            
-            f_est = interp1d(self.real["timestamp"], est_vx_raw, kind='linear', fill_value="extrapolate")
-            final_real_speed = np.abs(f_est(self.aligned["timestamp"])) # Sim 타임스탬프 기준
+            else:
+                print("[INFO] High-level velocity missing. Computing estimate...")
+                estimator = RobustVelocityEstimator()
+                
+                est_vx_raw = estimator.compute_velocity(self.real) # 원본 타임스탬프 기준
+                
+                f_est = interp1d(self.real["timestamp"], np.abs(est_vx_raw), kind='linear', fill_value="extrapolate")
+                final_real_speed = np.abs(f_est(self.aligned["timestamp"])) # Sim 타임스탬프 기준
 
         # Sim Power (Mechanical)
         sim_power = np.sum(np.abs(self.sim["dof_torque"] * self.sim["dof_vel"]), axis=1)

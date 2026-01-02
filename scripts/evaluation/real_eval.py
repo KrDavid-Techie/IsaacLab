@@ -14,17 +14,17 @@ except ImportError:
 
 class RobustVelocityEstimator:
     """
-    속도 정보가 누락된 경우, 관절(Leg Odom)과 IMU 데이터를 이용해 속도를 복원하는 클래스
+    Robust Velocity Estimator using Sensor Fusion (Leg Odometry + IMU)
     """
     def __init__(self):
         self.alpha = 0.95  # Filter weight
         self.dt = 0.002    # Sample time (approx)
 
     def compute_velocity(self, data):
-        """데이터 딕셔너리를 받아 추정 속도(vx) 배열을 반환"""
+        """Takes a data dictionary and returns an estimated velocity (vx) array."""
         print("[INFO] Computing velocity from Sensor Fusion (Leg Odom + IMU)...")
         
-        # 데이터 추출
+        # Extract data
         dof_vel = data["dof_vel"]
         dof_pos = data["dof_pos"]
         
@@ -33,6 +33,11 @@ class RobustVelocityEstimator:
             foot_force = data["foot_force"]
         else:
             foot_force = np.zeros((len(dof_vel), 4))
+
+        if "dof_torque" in data:
+            dof_torque = data["dof_torque"]
+        else:
+            dof_torque = None
 
         if "base_acc" in data:
             acc_local = data["base_acc"]
@@ -58,7 +63,20 @@ class RobustVelocityEstimator:
             # 1. Leg Odometry (지면에 닿은 다리 기준 속도 역산)
             leg_vs = []
             for leg in range(4):
-                if foot_force[i, leg] > 15.0: # Contact threshold
+                is_contact = False
+                # Force Check
+                if foot_force[i, leg] > 15.0: 
+                    is_contact = True
+                
+                # Torque Check (Fallback)
+                if dof_torque is not None:
+                    idx = leg * 3
+                    # Thigh + Calf torque sum
+                    t_sum = abs(dof_torque[i, idx+1]) + abs(dof_torque[i, idx+2])
+                    if t_sum > 5.0:
+                        is_contact = True
+
+                if is_contact:
                     # 각 다리의 Hip, Thigh, Calf 인덱스
                     idx = leg * 3
                     q_thigh = dof_pos[i, idx+1]
@@ -390,12 +408,22 @@ class RealPerformanceEvaluator:
                 
                 avg_power = np.mean(active_power)
                 std_power = np.std(active_power)
-                avg_speed_val = np.mean(active_speed)
                 
-                if avg_speed_val > 0.01:
-                    cot_val = avg_power / (ROBOT_MASS * GRAVITY * avg_speed_val)
+                # [Modified] CoT Calculation: Filter for actual walking (speed > 0.2 m/s)
+                # to exclude standing/stuck phases which inflate CoT.
+                is_walking = active_speed > 0.2
+                if np.sum(is_walking) > 10: # Minimum frames to be valid
+                    walking_power = active_power[is_walking]
+                    walking_speed = active_speed[is_walking]
+                    cot_val = np.mean(walking_power) / (ROBOT_MASS * GRAVITY * np.mean(walking_speed))
+                    print(f"[INFO] CoT calculated using {np.sum(is_walking)} frames (Speed > 0.2 m/s)")
                 else:
-                    cot_val = 0.0
+                    # Fallback to average if never reached 0.2 m/s
+                    avg_speed_val = np.mean(active_speed)
+                    if avg_speed_val > 0.01:
+                        cot_val = avg_power / (ROBOT_MASS * GRAVITY * avg_speed_val)
+                    else:
+                        cot_val = 0.0
                     
         cot_ratio = avg_power / BASELINE_POWER if BASELINE_POWER > 0 else 0.0
             
@@ -451,7 +479,7 @@ class RealPerformanceEvaluator:
 
         # --- CSV 저장 ---
         today_str = datetime.now().strftime('%Y-%m-%d')
-        csv_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'result')
+        csv_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sim2real_reports')
         os.makedirs(csv_dir, exist_ok=True)
         csv_path = os.path.join(csv_dir, f"real_eval_report_{today_str}.csv")
         file_exists = os.path.isfile(csv_path)

@@ -52,20 +52,26 @@ The evaluation process consists of three main steps:
 ### 1. Real-world Logger (`go2_logger`)
 *   **Path**: `scripts/evaluation/go2_logger/`
 *   **Description**: A ROS2 node that subscribes to Unitree Go2 topics (`/sport/modestate`, `/lowstate`, `/wireless_remote`) and records them.
+    *   **Smart Logging**: Automatically filters out idle periods. Records only when movement is detected (with 0.5s pre/post-roll buffer).
+    *   **State Estimation**: Includes `state_estimate.py` for Sensor Fusion (IMU + Leg Odom) and Torque-based Contact Detection to recover velocity data in rough terrain.
 *   **설명**: Unitree Go2의 토픽들을 구독하고 기록하는 ROS2 노드입니다. 리모트 컨트롤러 입력도 지원합니다.
+    *   **스마트 로깅**: 정지 구간을 자동으로 필터링합니다. 움직임이 감지될 때만(전후 0.5초 버퍼 포함) 기록합니다.
+    *   **상태 추정**: 험지에서의 속도 데이터 복원을 위해 센서 퓨전(IMU + Leg Odom) 및 토크 기반 접촉 감지 알고리즘(`state_estimate.py`)을 내장하고 있습니다.
 *   **Usage / 사용법**:
     ```bash
     # On the robot or ROS2 environment
     ros2 run go2_logger logger_node
     ```
 *   **Output**:
-    *   `logs/real_log_{YYYY-MM-DD}.csv`: Daily appended log (CSV).
+    *   `logs/real_log_{YYYY-MM-DD}.csv`: Daily appended log (CSV). Includes estimated velocity (`est_vx`).
     *   `logs/real_log_{HHMMSS}/`: ROS2 MCAP bag file.
 
 ### 2. Real-world Evaluator (`real_eval.py`)
 *   **Path**: `scripts/evaluation/real_eval.py`
 *   **Description**: Analyzes real-world robot logs to evaluate performance metrics (Velocity Tracking, Stability, Energy) based on internal ground truth.
+    *   **Robust Velocity**: Uses `est_vx` (Sensor Fusion) if high-level velocity data is missing or unreliable (e.g., in rough terrain).
 *   **설명**: 실제 로봇 주행 로그(.csv, .mcap)를 분석하여 속도 추종성, 주행 안정성, 에너지 효율성 등의 성능 지표를 평가합니다. (시뮬레이션 비교 없음)
+    *   **강건한 속도 추정**: 험지 등에서 상위 레벨 속도 데이터가 누락될 경우, 센서 퓨전으로 복원된 `est_vx`를 사용하여 평가합니다.
 *   **Usage / 사용법**:
     ```bash
     isaaclab.bat -p scripts/evaluation/real_eval.py --real_log scripts/evaluation/go2_logger/logs/real_log_2025-12-29.csv
@@ -75,35 +81,39 @@ The evaluation process consists of three main steps:
     *   Console Output: Performance Report (Velocity RMSE, Roll/Pitch Bias, CoT, Jitter).
 
 ### 3. Simulation Evaluator (`sim_eval.py`)
-*   **Description**: Loads a trained checkpoint, runs the simulation (headless by default), and saves detailed logs.
-*   **설명**: 학습된 체크포인트를 로드하여 시뮬레이션을 실행(기본값: Headless)하고 상세 로그를 저장합니다.
+*   **Description**: Loads a trained checkpoint, runs the simulation (headless by default), and saves detailed logs. Also supports offline analysis of existing logs.
+*   **설명**: 학습된 체크포인트를 로드하여 시뮬레이션을 실행(기본값: Headless)하고 상세 로그를 저장합니다. 기존 로그의 오프라인 분석도 지원합니다.
 *   **Usage / 사용법**:
     ```bash
     # Run evaluation for 20 seconds
     isaaclab.bat -p scripts/evaluation/sim_eval.py --task Isaac-Velocity-Rough-Unitree-Go2-v0 --num_envs 1 --evaluation_time 20.0
+
+    # Analyze existing log (Offline)
+    isaaclab.bat -p scripts/evaluation/sim_eval.py --analyze_log scripts/evaluation/sim_logs/pkl/sim_log_....pkl
     ```
 *   **Key Arguments**:
     *   `--headless`: Run without GUI (Default: True).
     *   `--evaluation_time`: Duration of the run in seconds.
+    *   `--analyze_log`: Path to an existing log file to analyze without running simulation.
 *   **Output**:
 <img src="docs\sim_eval.png"> 
-    *   `scripts/evaluation/result/csv/sim_log_{timestamp}.csv`
-    *   `scripts/evaluation/result/pkl/sim_log_{timestamp}.pkl`
+    *   `scripts/evaluation/sim_logs/csv/sim_log_{timestamp}.csv`
+    *   `scripts/evaluation/sim_logs/pkl/sim_log_{timestamp}.pkl`
 
 ### 4. Sim-to-Real Comparator (`sim2real_eval.py`)
-*   **Description**: Aligns timestamps between Sim and Real data, calculates error metrics, and appends results to a daily CSV report.
-*   **설명**: 시뮬레이션과 실제 데이터의 타임스탬프를 정렬하고, 오차 지표를 계산하여 일일 CSV 리포트에 추가합니다.
+*   **Description**: Aligns timestamps between Sim and Real data, calculates error metrics, and appends results to a daily CSV report. Uses robust velocity estimation for fair comparison.
+*   **설명**: 시뮬레이션과 실제 데이터의 타임스탬프를 정렬하고, 오차 지표를 계산하여 일일 CSV 리포트에 추가합니다. 공정한 비교를 위해 강건한 속도 추정치를 사용합니다.
 *   **Usage / 사용법**:
     ```bash
     # Using CSV files (Recommended)
-    isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file scripts/evaluation/result/csv/sim_log_....csv --real_log scripts/evaluation/go2_logger/logs/real_log_....csv
+    isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file scripts/evaluation/sim_logs/csv/sim_log_....csv --real_log scripts/evaluation/go2_logger/logs/real_log_....csv
     
     # Using Legacy formats (PKL + MCAP)
     isaaclab.bat -p scripts/evaluation/sim2real_eval.py --sim_file path/to/sim_log.pkl --real_log path/to/real_log.mcap
     ```
 *   **Output**:
 <img src="docs\sim2real_eval.png"> 
-    * `scripts/evaluation/result/sim2real_report_{YYYY-MM-DD}.csv`
+    * `scripts/evaluation/sim2real_reports/sim2real_report_{YYYY-MM-DD}.csv`
 
 ---
 
@@ -132,9 +142,11 @@ The following metrics are calculated to evaluate the policy performance and Sim-
 scripts/evaluation/
 ├── go2_logger/          # ROS2 Package for real robot logging
 │   └── logs/            # Real-world logs (.csv, .mcap)
-├── result/              # Output directory
+├── sim_logs/            # Simulation logs
 │   ├── csv/             # Simulation raw data (.csv)
 │   ├── pkl/             # Simulation raw data (.pkl)
+│   └── simulation_eval_*.csv # Summary CSV
+├── sim2real_reports/    # Sim-to-Real comparison reports
 │   └── sim2real_report_*.csv  # Daily evaluation reports
 ├── sim_eval.py          # Simulation inference script
 ├── sim2real_eval.py     # Comparison & Analysis script
