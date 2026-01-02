@@ -430,28 +430,59 @@ class RealPerformanceEvaluator:
         print("\n" + "="*50)
         print("REAL ROBOT PERFORMANCE REPORT (Internal GT)")
         print("="*50)
-        
         print("1. Velocity Tracking (GT: Time-variant cmd_vel)")
         print(f"   Vx RMSE: {metrics['rmse_vx']:.4f} m/s")
         print(f"   Vy RMSE: {metrics['rmse_vy']:.4f} m/s")
         print(f"   Wz RMSE: {metrics['rmse_wz']:.4f} rad/s")
-        
         print("\n2. Stability (GT: 0.0 rad)")
         print(f"   Roll  - Mean (Bias): {metrics['roll_mean']:.4f}, Std: {metrics['roll_std']:.4f}")
         print(f"   Pitch - Mean (Bias): {metrics['pitch_mean']:.4f}, Std: {metrics['pitch_std']:.4f}")
         if abs(metrics['pitch_mean']) > 0.03:
             print(f"   [WARN] Pitch bias > 0.03 rad detected. Calibration recommended.")
-            
         print("\n3. Energy Efficiency (Baseline: 53.8 W)")
         print(f"   Avg Power: {metrics['avg_power']:.2f} W (+/- {metrics['std_power']:.2f})")
         print(f"   Ratio to Baseline: {metrics['power_ratio']:.2f}x")
         print(f"   Velocity Source: {metrics.get('vel_source', 'Unknown')}")
         print(f"   Calculated CoT:  {metrics.get('cot', 0.0):.4f}")
-        
         print("\n4. Control Smoothness (Jitter)")
         print(f"   Torque Jitter: {metrics['torque_jitter']:.4f} Nm/step")
         print(f"   (Lower is better. High values indicate vibration/noise)")
         print("="*50 + "\n")
+
+        # --- CSV 저장 ---
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        csv_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'result')
+        os.makedirs(csv_dir, exist_ok=True)
+        csv_path = os.path.join(csv_dir, f"real_eval_report_{today_str}.csv")
+        file_exists = os.path.isfile(csv_path)
+        fieldnames = [
+            'Date', 'Vx_RMSE', 'Vy_RMSE', 'Wz_RMSE',
+            'Roll_Mean', 'Roll_Std', 'Pitch_Mean', 'Pitch_Std',
+            'Avg_Power', 'Std_Power', 'Power_Ratio', 'CoT', 'Velocity_Source', 'Torque_Jitter'
+        ]
+        row = {
+            'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'Vx_RMSE': f"{metrics['rmse_vx']:.4f}",
+            'Vy_RMSE': f"{metrics['rmse_vy']:.4f}",
+            'Wz_RMSE': f"{metrics['rmse_wz']:.4f}",
+            'Roll_Mean': f"{metrics['roll_mean']:.4f}",
+            'Roll_Std': f"{metrics['roll_std']:.4f}",
+            'Pitch_Mean': f"{metrics['pitch_mean']:.4f}",
+            'Pitch_Std': f"{metrics['pitch_std']:.4f}",
+            'Avg_Power': f"{metrics['avg_power']:.2f}",
+            'Std_Power': f"{metrics['std_power']:.2f}",
+            'Power_Ratio': f"{metrics['power_ratio']:.2f}",
+            'CoT': f"{metrics.get('cot', 0.0):.4f}",
+            'Velocity_Source': metrics.get('vel_source', 'Unknown'),
+            'Torque_Jitter': f"{metrics['torque_jitter']:.4f}"
+        }
+        import csv
+        with open(csv_path, 'a', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+        print(f"[INFO] Report appended to {csv_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Real Robot Performance Evaluator")

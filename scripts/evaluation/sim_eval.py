@@ -10,9 +10,6 @@
 import argparse
 import sys
 import os
-import pickle
-import pandas as pd
-import numpy as np
 
 # Set KMP_DUPLICATE_LIB_OK to TRUE to avoid OpenMP errors
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -24,24 +21,146 @@ from isaaclab.app import AppLauncher
 sys.path.append(os.path.join(os.path.dirname(__file__), "../reinforcement_learning/rsl_rl"))
 import cli_args  # isort: skip
 
+def analyze_existing_log(log_path):
+    import numpy as np
+    import pickle
+    import csv
+    import os
+    from datetime import datetime
+
+    print(f"[INFO] Analyzing existing log: {log_path}")
+    
+    if not os.path.exists(log_path):
+        print(f"[ERROR] File not found: {log_path}")
+        return
+
+    data = {}
+    if log_path.endswith(".pkl"):
+        with open(log_path, "rb") as f:
+            data = pickle.load(f)
+            # Convert lists to numpy
+            for k, v in data.items():
+                if isinstance(v, list):
+                    data[k] = np.array(v)
+    elif log_path.endswith(".csv"):
+        # Load CSV
+        data = {
+            "timestamp": [],
+            "command_vel": [],
+            "base_lin_vel": [],
+            "dof_pos": [],
+            "dof_vel": [],
+            "dof_torque": []
+        }
+        with open(log_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    data["timestamp"].append(float(row['timestamp']))
+                    data["command_vel"].append([float(row[f'cmd_vel_{i}']) for i in range(3)])
+                    data["base_lin_vel"].append([float(row[f'base_lin_vel_{i}']) for i in range(3)])
+                    data["dof_pos"].append([float(row[f'dof_pos_{i}']) for i in range(12)])
+                    data["dof_vel"].append([float(row[f'dof_vel_{i}']) for i in range(12)])
+                    data["dof_torque"].append([float(row[f'dof_torque_{i}']) for i in range(12)])
+                except ValueError:
+                    continue
+        
+        for k in data:
+            data[k] = np.array(data[k])
+    else:
+        print("[ERROR] Unsupported file format. Use .pkl or .csv")
+        return
+
+    # Calculate Metrics
+    cmd_vel = data.get("command_vel", np.array([]))
+    base_vel = data.get("base_lin_vel", np.array([]))
+    
+    rmse = None
+    if len(cmd_vel) > 0 and len(base_vel) > 0:
+        target_v = cmd_vel[:, :2]
+        current_v = base_vel[:, :2]
+        error = np.linalg.norm(target_v - current_v, axis=1)
+        rmse = np.sqrt(np.mean(error**2))
+
+    torques = data.get("dof_torque", np.array([]))
+    dof_vels = data.get("dof_vel", np.array([]))
+    
+    cot_proxy = None
+    avg_power = None
+    if len(torques) > 0 and len(dof_vels) > 0:
+        power = np.sum(np.abs(torques * dof_vels), axis=1)
+        avg_power = np.mean(power)
+        
+        speeds = np.linalg.norm(base_vel, axis=1)
+        avg_vel = np.mean(speeds)
+        
+        if avg_vel > 1e-3:
+            cot_proxy = avg_power / avg_vel
+
+    avg_smoothness = None
+    if len(torques) > 0:
+        timestamps = data.get("timestamp", [])
+        if len(timestamps) > 1:
+            dt = np.mean(np.diff(timestamps))
+            if dt > 0:
+                torque_diff = np.diff(torques, axis=0) / dt
+                smoothness = np.mean(np.abs(torque_diff))
+                avg_smoothness = smoothness
+
+    # Report
+    report_lines = []
+    report_lines.append("\n" + "="*50)
+    report_lines.append(f"EVALUATION REPORT (FROM LOG) - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append(f"Log File: {os.path.basename(log_path)}")
+    report_lines.append("="*50)
+    
+    if rmse is not None:
+        report_lines.append(f"Velocity RMSE: {rmse:.4f} m/s")
+    
+    if cot_proxy is not None:
+        report_lines.append(f"CoT Proxy (Power/Velocity): {cot_proxy:.4f} J/m")
+    elif avg_power is not None:
+        report_lines.append(f"Average Power: {avg_power:.4f} W (Velocity too low for CoT)")
+        
+    if avg_smoothness is not None:
+        report_lines.append(f"Torque Smoothness (dTorque/dt): {avg_smoothness:.4f} Nm/s")
+        
+    report_lines.append("Undesired Base Contacts: N/A (Not available in sim log)")
+    report_lines.append("="*50)
+    
+    print("\n".join(report_lines))
+    
+    eval_output_dir = os.path.dirname(os.path.abspath(log_path))
+    csv_filename = f"simulation_eval_analysis.csv"
+    csv_path = os.path.join(eval_output_dir, csv_filename)
+    file_exists = os.path.isfile(csv_path)
+    
+    with open(csv_path, mode='a', newline='') as csv_file:
+        fieldnames = ['Date', 'LogFile', 'Velocity_RMSE', 'CoT_Proxy', 'Torque_Smoothness']
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({
+            'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'LogFile': os.path.basename(log_path),
+            'Velocity_RMSE': f"{rmse:.4f}" if rmse is not None else "N/A",
+            'CoT_Proxy': f"{cot_proxy:.4f}" if cot_proxy is not None else "N/A",
+            'Torque_Smoothness': f"{avg_smoothness:.4f}" if avg_smoothness is not None else "N/A"
+        })
+    print(f"[INFO] Analysis results appended to: {csv_path}")
+
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Evaluate an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during evaluation.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
+parser.add_argument("--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations.")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default="Isaac-Velocity-Rough-Unitree-Go2-v0", help="Name of the task.")
-parser.add_argument(
-    "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
-)
+parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
-parser.add_argument(
-    "--use_pretrained_checkpoint",
-    action="store_true",
-    help="Use the pre-trained checkpoint from Nucleus.",
-)
+parser.add_argument("--use_pretrained_checkpoint", action="store_true", help="Use the pre-trained checkpoint from Nucleus.")
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--evaluation_time", type=float, default=10.0, help="Time duration for evaluation in seconds.")
 
@@ -51,79 +170,8 @@ parser.add_argument("--minio_access_key", type=str, default=None, help="MinIO ac
 parser.add_argument("--minio_secret_key", type=str, default=None, help="MinIO secret key")
 parser.add_argument("--minio_bucket", type=str, default=None, help="MinIO bucket name")
 
-# Analyze existing log without running simulation
-parser.add_argument("--analyze_log", type=str, default=None, help="Analyze existing log file without running simulation.")
-
-args_cli, hydra_args = parser.parse_known_args()
-
-if args_cli.analyze_log is not None:
-    def analyze_existing_log(file_path):
-        """
-        Isaac Sim을 실행하지 않고 기존 로그 파일만 분석하여 통계를 출력합니다.
-        """
-        print(f"\n[INFO] 📊 Starting Static Analysis: {file_path}")
-        
-        if not os.path.exists(file_path):
-            print(f"[ERROR] File not found: {file_path}")
-            return
-
-        data = {}
-        try:
-            if file_path.endswith('.csv'):
-                df = pd.read_csv(file_path)
-                for col in df.columns:
-                    data[col] = df[col].to_numpy()
-            elif file_path.endswith('.pkl'):
-                with open(file_path, 'rb') as f:
-                    data = pickle.load(f)
-            else:
-                print("[ERROR] Unsupported file format. Use .csv or .pkl")
-                return
-
-            # Metrics Calculation
-            if 'cmd_vel_0' in data and 'base_lin_vel_0' in data: # CSV style
-                cmd_vx = data['cmd_vel_0']
-                meas_vx = data['base_lin_vel_0']
-                cmd_wz = data['cmd_vel_2']
-                meas_wz = data['base_ang_vel_2'] if 'base_ang_vel_2' in data else np.zeros_like(cmd_vx)
-            elif 'command_lin_vel' in data and 'base_lin_vel' in data: # PKL style
-                cmd_vx = data['command_lin_vel'][:, 0]
-                meas_vx = data['base_lin_vel'][:, 0]
-                cmd_wz = data['command_ang_vel'][:, 2]
-                meas_wz = data['base_ang_vel'][:, 2]
-            else:
-                print("[WARN] Velocity columns not found. Skipping metrics.")
-                cmd_vx, meas_vx = np.zeros(1), np.zeros(1)
-                cmd_wz, meas_wz = np.zeros(1), np.zeros(1)
-
-            vx_rmse = np.sqrt(np.mean((cmd_vx - meas_vx)**2))
-            wz_rmse = np.sqrt(np.mean((cmd_wz - meas_wz)**2))
-
-            # Torque
-            torque_keys = [k for k in data.keys() if 'dof_torque' in k]
-            if torque_keys:
-                all_torques = np.stack([data[k] for k in torque_keys], axis=1)
-                avg_torque = np.mean(np.abs(all_torques))
-            elif 'dof_torque' in data:
-                avg_torque = np.mean(np.abs(data['dof_torque']))
-            else:
-                avg_torque = 0.0
-
-            print("-" * 50)
-            print(f"📄 Log Analysis Result")
-            print("-" * 50)
-            print(f"1. Velocity Tracking RMSE")
-            print(f"   - Linear X : {vx_rmse:.4f} m/s")
-            print(f"   - Angular Z: {wz_rmse:.4f} rad/s")
-            print(f"2. Efficiency")
-            print(f"   - Avg Torque: {avg_torque:.4f} Nm")
-            print("-" * 50 + "\n")
-
-        except Exception as e:
-            print(f"[ERROR] During analysis: {e}")
-
-    analyze_existing_log(args_cli.analyze_log)
-    sys.exit(0)
+# Analyze existing log argument
+parser.add_argument("--analyze_log", type=str, default=None, help="Path to an existing simulation log file to analyze (skips simulation).")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -132,6 +180,12 @@ AppLauncher.add_app_launcher_args(parser)
 # Set headless to True by default
 parser.set_defaults(headless=True)
 # parse the arguments
+args_cli, hydra_args = parser.parse_known_args()
+
+if args_cli.analyze_log:
+    analyze_existing_log(args_cli.analyze_log)
+    sys.exit(0)
+
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -203,7 +257,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_dir = os.path.dirname(resume_path)
     
     # Set evaluation output directory to scripts/evaluation/result
-    eval_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "result")
+    eval_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_logs")
     os.makedirs(eval_output_dir, exist_ok=True)
 
     # Disable environment logging to prevent events.out.tfevents generation
