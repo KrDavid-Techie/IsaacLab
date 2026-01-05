@@ -70,15 +70,17 @@ The evaluation process consists of three main steps:
 *   **Path**: `scripts/evaluation/real_eval.py`
 *   **Description**: Analyzes real-world robot logs to evaluate performance metrics (Velocity Tracking, Stability, Energy) based on internal ground truth.
     *   **Robust Velocity**: Uses `est_vx` (Sensor Fusion) if high-level velocity data is missing or unreliable (e.g., in rough terrain).
+    *   **Safety & Thermal**: Evaluates Proximity Speed Compliance (PSC) using LiDAR data and monitors motor temperature.
 *   **설명**: 실제 로봇 주행 로그(.csv, .mcap)를 분석하여 속도 추종성, 주행 안정성, 에너지 효율성 등의 성능 지표를 평가합니다. (시뮬레이션 비교 없음)
     *   **강건한 속도 추정**: 험지 등에서 상위 레벨 속도 데이터가 누락될 경우, 센서 퓨전으로 복원된 `est_vx`를 사용하여 평가합니다.
+    *   **안전 및 발열**: LiDAR 데이터를 이용한 근접 속도 준수(PSC) 여부와 모터 온도를 평가합니다.
 *   **Usage / 사용법**:
     ```bash
     isaaclab.bat -p scripts/evaluation/real_eval.py --real_log scripts/evaluation/go2_logger/logs/real_log_2025-12-29.csv
     ```
 *   **Output**:
 <img src="docs\real_eval.png"> 
-    *   Console Output: Performance Report (Velocity RMSE, Roll/Pitch Bias, CoT, Jitter).
+    *   Console Output: Performance Report (Velocity RMSE, Roll/Pitch Bias, CoT, Jitter, Max Temp, PSC Score).
 
 ### 3. Simulation Evaluator (`sim_eval.py`)
 *   **Description**: Loads a trained checkpoint, runs the simulation (headless by default), and saves detailed logs. Also supports offline analysis of existing logs.
@@ -130,6 +132,8 @@ The following metrics are calculated to evaluate the policy performance and Sim-
 | **Real CoT (Mech)** | Cost of Transport in Real World (Mechanical Work only). <br> 실제 로봇의 이동 비용 (기계적 일률 기준). | Used for Sim-to-Real comparison. |
 | **Real CoT (Elec)** | Cost of Transport in Real World (Total Electrical Power). <br> 실제 로봇의 이동 비용 (배터리 총 소모량 기준). | Includes computer/sensor power. Higher than Mech. |
 | **Torque Smoothness (Jitter)** | Mean absolute derivative of torque over time. Indicates control stability. <br> 시간당 토크 변화량의 평균. 제어 안정성을 나타냄. | Lower is better. |
+| **Max Motor Temp** | Maximum temperature recorded among all 12 motors. <br> 12개 모터 중 기록된 최고 온도. | Safety limit: < 85°C. |
+| **PSC Score** | Proximity Speed Compliance Score. Integral of velocity violation near obstacles. <br> 근접 속도 준수 점수. 장애물 근처에서의 속도 위반량 적분값. | Lower is better (0 is perfect). |
 
 > **Note**: CoT values are set to 0.0 if the robot's velocity is near zero (< 0.01 m/s) to avoid division by zero errors.
 > **참고**: 로봇의 속도가 0에 가까울 경우 (< 0.01 m/s), 0으로 나누는 오류를 방지하기 위해 CoT 값은 0.0으로 설정됩니다.

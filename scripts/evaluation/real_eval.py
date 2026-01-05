@@ -133,7 +133,8 @@ class CsvLogLoader:
             "rpy": [],
             "foot_force": [],
             "base_acc": [],
-            "base_quat": []
+            "base_quat": [],
+            "motor_temp": []
         }
         
         with open(self.file_path, 'r') as f:
@@ -172,6 +173,12 @@ class CsvLogLoader:
                     data["dof_vel"].append([float(row[f'dof_vel_{i}']) for i in range(12)])
                     data["dof_torque"].append([float(row[f'dof_torque_{i}']) for i in range(12)])
                     
+                    # Motor Temp
+                    if 'motor_temp_0' in row:
+                        data["motor_temp"].append([float(row[f'motor_temp_{i}']) for i in range(12)])
+                    else:
+                        data["motor_temp"].append([0.0]*12)
+
                     # RPY
                     if 'rpy_roll' in row:
                         data["rpy"].append([
@@ -242,7 +249,8 @@ class RosBagLoader:
             "dof_pos": [],
             "dof_vel": [],
             "dof_torque": [],
-            "command_vel": []
+            "command_vel": [],
+            "scan_min_dist": []
         }
         
         # Temporary storage for synchronization
@@ -250,6 +258,7 @@ class RosBagLoader:
         # We trigger a data point when we receive JointState
         last_cmd = [0.0, 0.0, 0.0] # vx, vy, wz
         last_odom_vel = [0.0, 0.0, 0.0] # vx, vy, vz
+        last_scan_min = 10.0 # Default safe distance
         
         with open(self.bag_path, "rb") as f:
             reader = make_reader(f, decoder_factories=[DecoderFactory()])
@@ -257,7 +266,7 @@ class RosBagLoader:
             start_time = None
             
             # Topics to read
-            topics = ["/joint_states", "/odom", "/cmd_vel"]
+            topics = ["/joint_states", "/odom", "/cmd_vel", "/scan"]
             
             for schema, channel, message in reader.iter_decoded_messages(topics=topics):
                 topic = channel.topic
@@ -273,8 +282,19 @@ class RosBagLoader:
                         message.twist.twist.linear.y,
                         message.twist.twist.linear.z
                     ]
-                    
-                # 3. Joint States (Trigger)
+                
+                # 3. Scan (LiDAR)
+                elif topic == "/scan":
+                    # Find minimum distance in ranges
+                    ranges = np.array(message.ranges)
+                    # Filter invalid ranges
+                    valid_ranges = ranges[(ranges >= message.range_min) & (ranges <= message.range_max)]
+                    if len(valid_ranges) > 0:
+                        last_scan_min = np.min(valid_ranges)
+                    else:
+                        last_scan_min = 10.0
+
+                # 4. Joint States (Trigger)
                 elif topic == "/joint_states":
                     # Extract timestamp
                     t = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
@@ -298,6 +318,7 @@ class RosBagLoader:
                     data["dof_torque"].append(tau)
                     data["base_lin_vel"].append(last_odom_vel)
                     data["command_vel"].append(last_cmd)
+                    data["scan_min_dist"].append(last_scan_min)
 
         # Convert to numpy arrays
         for key in data:
@@ -438,6 +459,47 @@ class RealPerformanceEvaluator:
         else:
             torque_jitter = 0.0
 
+        # 5. Thermal Efficiency (Max Temp)
+        max_temp = 0.0
+        if "motor_temp" in self.real and len(self.real["motor_temp"]) > 0:
+            max_temp = np.max(self.real["motor_temp"])
+        
+        # 6. Proximity Speed Compliance (PSC)
+        psc_violation_count = 0
+        psc_violation_ratio = 0.0
+        psc_score = 0.0 # 0 is best
+        
+        # Define Safety Curve Parameters
+        D_STOP = 0.45 # m (Intimate space)
+        D_SLOW = 1.0  # m
+        V_MAX = 1.0   # m/s
+        
+        if "scan_min_dist" in self.real and len(self.real["scan_min_dist"]) > 0:
+            d_min = self.real["scan_min_dist"]
+            v_curr = final_speed_data
+            
+            # Calculate Limit Velocity
+            # v_limit = (d - d_stop) / (d_slow - d_stop) * v_max
+            # Clamped between 0 and v_max
+            v_limit = (d_min - D_STOP) / (D_SLOW - D_STOP) * V_MAX
+            v_limit = np.clip(v_limit, 0.0, V_MAX)
+            
+            # Check Violation
+            # Violation if v_curr > v_limit + margin (0.05 m/s)
+            violation_mask = v_curr > (v_limit + 0.05)
+            
+            psc_violation_count = np.sum(violation_mask)
+            total_frames = len(d_min)
+            if total_frames > 0:
+                psc_violation_ratio = psc_violation_count / total_frames
+                
+                # Calculate Integral Score (Area of violation)
+                # Sum of (v_curr - v_limit) * dt
+                # Assuming constant dt approx 0.002 or use timestamp diff
+                # Simple sum for score
+                violation_mag = v_curr[violation_mask] - v_limit[violation_mask]
+                psc_score = np.sum(violation_mag)
+
         return {
             "rmse_vx": rmse_vx,
             "rmse_vy": rmse_vy,
@@ -451,7 +513,11 @@ class RealPerformanceEvaluator:
             "power_ratio": cot_ratio,
             "cot": cot_val,
             "vel_source": velocity_source,
-            "torque_jitter": torque_jitter
+            "torque_jitter": torque_jitter,
+            "max_temp": max_temp,
+            "psc_violation_count": psc_violation_count,
+            "psc_violation_ratio": psc_violation_ratio,
+            "psc_score": psc_score
         }
 
     def generate_report(self, metrics):
@@ -475,6 +541,12 @@ class RealPerformanceEvaluator:
         print("\n4. Control Smoothness (Jitter)")
         print(f"   Torque Jitter: {metrics['torque_jitter']:.4f} Nm/step")
         print(f"   (Lower is better. High values indicate vibration/noise)")
+        print("\n5. Thermal & Safety")
+        print(f"   Max Motor Temp: {metrics['max_temp']:.1f} °C")
+        if metrics['max_temp'] > 85.0:
+             print(f"   [CRITICAL] Motor Overheat Detected (> 85°C)!")
+        print(f"   PSC Violations: {metrics['psc_violation_count']} frames ({metrics['psc_violation_ratio']*100:.1f}%)")
+        print(f"   PSC Score: {metrics['psc_score']:.2f} (Lower is better)")
         print("="*50 + "\n")
 
         # --- CSV 저장 ---
@@ -486,7 +558,8 @@ class RealPerformanceEvaluator:
         fieldnames = [
             'Date', 'Vx_RMSE', 'Vy_RMSE', 'Wz_RMSE',
             'Roll_Mean', 'Roll_Std', 'Pitch_Mean', 'Pitch_Std',
-            'Avg_Power', 'Std_Power', 'Power_Ratio', 'CoT', 'Velocity_Source', 'Torque_Jitter'
+            'Avg_Power', 'Std_Power', 'Power_Ratio', 'CoT', 'Velocity_Source', 'Torque_Jitter',
+            'Max_Temp', 'PSC_Violations', 'PSC_Score'
         ]
         row = {
             'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -502,7 +575,10 @@ class RealPerformanceEvaluator:
             'Power_Ratio': f"{metrics['power_ratio']:.2f}",
             'CoT': f"{metrics.get('cot', 0.0):.4f}",
             'Velocity_Source': metrics.get('vel_source', 'Unknown'),
-            'Torque_Jitter': f"{metrics['torque_jitter']:.4f}"
+            'Torque_Jitter': f"{metrics['torque_jitter']:.4f}",
+            'Max_Temp': f"{metrics['max_temp']:.1f}",
+            'PSC_Violations': f"{metrics['psc_violation_count']}",
+            'PSC_Score': f"{metrics['psc_score']:.2f}"
         }
         import csv
         with open(csv_path, 'a', newline='') as csvfile:
