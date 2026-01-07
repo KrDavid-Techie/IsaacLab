@@ -78,7 +78,6 @@ tests/
 # Evaluation
 **/*.txt
 **/*.out
-**/*.csv
 **/*.pkl
 **/*.pth
 **/*.pt
@@ -86,5 +85,4 @@ scripts/evaluation/go2_rl_deploy
 scripts/evaluation/go2_logger
 scripts/evaluation/logs
 scripts/evaluation/sim_logs
-scripts/evaluation/sim2real_reports
 scripts/evaluation_copy/

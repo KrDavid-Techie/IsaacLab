@@ -1,0 +1,2 @@
+Date,LogFile,Velocity_RMSE,CoT_Proxy,Torque_Smoothness
+2026-01-07 17:36:17,sim_log_unitree_go2_rough_2026-01-02_11-10-00.csv,0.1033,66.1947,44.0747

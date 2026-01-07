@@ -130,8 +130,12 @@ def analyze_existing_log(log_path):
     
     print("\n".join(report_lines))
     
-    eval_output_dir = os.path.dirname(os.path.abspath(log_path))
-    csv_filename = f"simulation_eval_analysis.csv"
+    # [User Request] Save results to scripts/evaluation/sim2real_reports
+    eval_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim2real_reports")
+    os.makedirs(eval_output_dir, exist_ok=True)
+    
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    csv_filename = f"sim_eval_{today_str}.csv"
     csv_path = os.path.join(eval_output_dir, csv_filename)
     file_exists = os.path.isfile(csv_path)
     

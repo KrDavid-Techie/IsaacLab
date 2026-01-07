@@ -379,13 +379,13 @@ class RealPerformanceEvaluator:
         cot_val = 0.0
         
         if "bms_power" in self.real and len(self.real["bms_power"]) > 0:
-            # Masking: Command가 있는 구간만
-            cmd_mag = np.linalg.norm(self.real["command_vel"][:, :2], axis=1)
-            is_active = cmd_mag > 0.01
+            # Masking: 실제 로봇이 움직이는 구간 (Selected Speed 기준)
+            speed_sensor = final_speed_data
+            is_active = speed_sensor > 0.01
             
             if np.sum(is_active) > 0:
                 active_power = self.real["bms_power"][is_active]
-                active_speed = final_speed_data[is_active]
+                active_speed = speed_sensor[is_active] # Selected 속도 사용
                 
                 avg_power = np.mean(active_power)
                 std_power = np.std(active_power)
@@ -464,6 +464,7 @@ class RealPerformanceEvaluator:
         print(f"   (Lower is better. High values indicate vibration/noise)")
         print("\n5. Thermal & Safety")
         print(f"   Max Motor Temp: {metrics['max_temp']:.1f} °C")
+        print(f"   Mean Motor Temp: {np.mean(self.real['motor_temp']):.1f} °C")
         if metrics['max_temp'] > 85.0:
              print(f"   [CRITICAL] Motor Overheat Detected (> 85°C)!")
         print("="*50 + "\n")

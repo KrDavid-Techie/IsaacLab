@@ -263,7 +263,10 @@ class SimToRealEvaluator:
             "real_torque_smoothness": real_smoothness
         }
 
-    def generate_report(self, metrics, output_dir="scripts\\evaluation\\sim2real_reports"):
+    def generate_report(self, metrics, output_dir=None):
+        if output_dir is None:
+            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim2real_reports")
+
         os.makedirs(output_dir, exist_ok=True)
         
         # Ground Truths
