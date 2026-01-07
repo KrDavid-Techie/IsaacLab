@@ -55,6 +55,25 @@ def main():
     real_log_path = check_file_exists(args.real_log)
     sim_log_path = check_file_exists(args.sim_log)
     
+    # [추가] 만약 real_log가 디렉토리라면 자동으로 최신 파일 선택
+    if os.path.isdir(real_log_path):
+        import glob
+        print(f"{Colors.WARNING}[Info] Directory provided. Searching for latest log in: {real_log_path}{Colors.ENDC}")
+        
+        # real_eval.py와 동일한 검색 로직 (MCAP or CSV)
+        csv_candidates = glob.glob(os.path.join(real_log_path, "*_base.csv"))
+        mcap_candidates = glob.glob(os.path.join(real_log_path, "*.mcap"))
+        candidates = csv_candidates + mcap_candidates
+        
+        if not candidates:
+            print(f"{Colors.FAIL}[Error] No valid log files (csv or mcap) found in {real_log_path}{Colors.ENDC}")
+            sys.exit(1)
+            
+        # 최신순 정렬
+        candidates.sort(key=os.path.getmtime, reverse=True)
+        real_log_path = candidates[0]
+        print(f"{Colors.OKGREEN}✔ Automatically selected latest log: {real_log_path}{Colors.ENDC}")
+    
     # 현재 스크립트의 위치 (다른 스크립트들도 같은 폴더에 있다고 가정)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -68,7 +87,8 @@ def main():
         print(f"{Colors.FAIL}[Error] real_eval.py not found in {base_dir}{Colors.ENDC}")
         sys.exit(1)
 
-    cmd_real = [sys.executable, real_eval_script, "--real_log", real_log_path]
+    # 수정된 real_eval.py 인터페이스에 맞춰 --file 옵션 사용 (파일 경로가 확정되었으므로)
+    cmd_real = [sys.executable, real_eval_script, "--file", real_log_path]
     run_command(cmd_real, "Real Log Analysis")
 
     # ------------------------------------------------------------------
